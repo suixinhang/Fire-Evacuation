@@ -24,7 +24,6 @@
   </div>
 
   <div class="columns">
-
     <div class="column is-3">
       <aside class="menu">
         <button class="button is-success is-fullwidth mb-2" onclick="submitMap()">Save Map</button>
@@ -38,19 +37,17 @@
     <div class="column is-9">
       <canvas id="grid" width="1200" height="750"></canvas>
     </div>
-
   </div>
 </div>
 </section>
 
-<!-- context menu for point types -->
-<div id="context-menu" class="dropdown is-active" style="position:absolute; display:none; z-index:100;">
+<div id="context-menu" class="dropdown is-active"
+     style="position:absolute; display:none; z-index:100;">
   <div class="dropdown-menu">
     <div class="dropdown-content" id="context-items"></div>
   </div>
 </div>
 
-<!-- title modal -->
 <div class="modal" id="title-modal">
   <div class="modal-background" onclick="closeTitleModal()"></div>
   <div class="modal-card">
@@ -64,7 +61,6 @@
   </div>
 </div>
 
-<!-- floor modal -->
 <div class="modal" id="floor-modal">
   <div class="modal-background" onclick="closeFloorModal()"></div>
   <div class="modal-card">
@@ -79,6 +75,7 @@
 </div>
 
 <script>
+/* ================== CONSTANTS ================== */
 const POINT_TYPES = [
   { type: "wall", name: "Wall", color: "#333" },
   { type: "responder", name: "Responder", color: "#3273dc" },
@@ -87,78 +84,71 @@ const POINT_TYPES = [
   { type: "startpoint", name: "Start Point", color: "#ffd700" }
 ];
 
-let currentType = POINT_TYPES[0];
-const mapData = { title:"Untitled Map", floors:[], id: "" };
+const mapData = { title:"Untitled Map", floors:[], id:"" };
 let currentFloor = null;
 let editingFloor = null;
 
-/* ================== LOAD MAP DATA ================== */
+/* ================== LOAD ================== */
 function loadMap(id){
   fetch(`/api/get_map_data/?id=${id}`)
-    .then(res=>res.json())
+    .then(r=>r.json())
     .then(tmp=>{
-      mapData.title = tmp.title || "Untitled Map";
-      mapData.id = tmp.id || "";
+      mapData.title = tmp.title;
+      mapData.id = tmp.id;
+      mapData.floors = tmp.data.map(f=>({name:f.name, points:f.points||[]}));
+      currentFloor = mapData.floors[0] || null;
       document.getElementById("map-title").textContent = mapData.title;
-
-      // floors 数据直接是 list，兼容后端
-      mapData.floors = tmp.data.map(floor=>{
-        return { name: floor.name, points: floor.points || [] };
-      });
-      if(mapData.floors.length>0) currentFloor = mapData.floors[0];
       renderFloors();
       drawGrid();
-    })
-    .catch(e=>console.error("Failed to load map:", e));
+    });
 }
 
 /* ================== FLOORS ================== */
-function renderFloors() {
-  const ul = document.getElementById("floor-list");
-  ul.innerHTML = "";
+function renderFloors(){
+  const ul=document.getElementById("floor-list");
+  ul.innerHTML="";
   mapData.floors.forEach((f,i)=>{
-    const li = document.createElement("li");
-    const a = document.createElement("a");
-    a.textContent = f.name;
+    const li=document.createElement("li");
+    const a=document.createElement("a");
+    a.textContent=f.name;
     if(f===currentFloor) a.classList.add("is-active");
-    a.onclick = () => { currentFloor=f; updateFloorActive(); drawGrid(); };
-    a.ondblclick = () => openFloorModal(f);
+    a.onclick=()=>{currentFloor=f;updateFloorActive();drawGrid();};
+    a.ondblclick=()=>openFloorModal(f);
+
     let timer;
-    a.onmousedown = () => { timer=setTimeout(()=>a.draggable=true,300); };
-    a.onmouseup = () => { clearTimeout(timer); };
-    a.ondragstart = e => e.dataTransfer.setData("index",i);
-    a.ondragover = e => e.preventDefault();
-    a.ondrop = e => {
+    a.onmousedown=()=>timer=setTimeout(()=>a.draggable=true,300);
+    a.onmouseup=()=>clearTimeout(timer);
+
+    a.ondragstart=e=>e.dataTransfer.setData("index",i);
+    a.ondragover=e=>e.preventDefault();
+    a.ondrop=e=>{
       const from=e.dataTransfer.getData("index");
       mapData.floors.splice(i,0,mapData.floors.splice(from,1)[0]);
       renderFloors();
     };
 
-    const del = document.createElement("button");
+    const del=document.createElement("button");
     del.className="button is-small is-danger ml-2";
-    del.style.flexShrink="0";
     del.textContent="×";
-    del.onclick = e=>{
+    del.onclick=e=>{
       e.stopPropagation();
-      if(currentFloor===f) currentFloor=null;
       mapData.floors.splice(i,1);
+      if(currentFloor===f) currentFloor=null;
       renderFloors();
       drawGrid();
     };
 
-    li.appendChild(a);
-    li.appendChild(del);
+    li.append(a,del);
     ul.appendChild(li);
   });
 }
 
 function updateFloorActive(){
-  const items = document.querySelectorAll("#floor-list li a");
-  items.forEach(a=>{
-    a.classList.remove("is-active");
-    if(mapData.floors.find(f=>f.name===a.textContent)===currentFloor){
-      a.classList.add("is-active");
-    }
+  document.querySelectorAll("#floor-list a").forEach(a=>{
+    a.classList.toggle(
+      "is-active",
+      mapData.floors.find(f=>f.name===a.textContent)===currentFloor
+    );
   });
 }
 
@@ -167,23 +157,31 @@ function openFloorModal(f=null){
   document.getElementById("floor-input").value=f?f.name:"";
   document.getElementById("floor-modal").classList.add("is-active");
 }
-function closeFloorModal(){ document.getElementById("floor-modal").classList.remove("is-active"); }
+function closeFloorModal(){document.getElementById("floor-modal").classList.remove("is-active");}
 function saveFloor(){
   const name=document.getElementById("floor-input").value.trim();
   if(!name) return;
-  if(!editingFloor){
+  if(editingFloor) editingFloor.name=name;
+  else{
     const f={name,points:[]};
     mapData.floors.push(f);
     currentFloor=f;
-  } else { editingFloor.name=name; }
+  }
   closeFloorModal();
   renderFloors();
 }
 
 /* ================== TITLE ================== */
-function openTitleModal(){ document.getElementById("title-input").value=mapData.title; document.getElementById("title-modal").classList.add("is-active"); }
-function closeTitleModal(){ document.getElementById("title-modal").classList.remove("is-active"); }
-function saveTitle(){ mapData.title=document.getElementById("title-input").value; document.getElementById("map-title").textContent=mapData.title; closeTitleModal(); }
+function openTitleModal(){
+  document.getElementById("title-input").value=mapData.title;
+  document.getElementById("title-modal").classList.add("is-active");
+}
+function closeTitleModal(){document.getElementById("title-modal").classList.remove("is-active");}
+function saveTitle(){
+  mapData.title=document.getElementById("title-input").value;
+  document.getElementById("map-title").textContent=mapData.title;
+  closeTitleModal();
+}
 
 /* ================== GRID ================== */
 const canvas=document.getElementById("grid");
@@ -197,11 +195,11 @@ function drawGrid(){
   ctx.font="10px sans-serif";
 
   for(let x=0;x<=canvas.width;x+=size){
-    ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,canvas.height); ctx.stroke();
+    ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,canvas.height);ctx.stroke();
     ctx.fillText(x/size,x+2,10);
   }
   for(let y=0;y<=canvas.height;y+=size){
-    ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(canvas.width,y); ctx.stroke();
+    ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(canvas.width,y);ctx.stroke();
     ctx.fillText(y/size,2,y-2);
   }
 
@@ -211,25 +209,72 @@ function drawGrid(){
     ctx.fillRect(p.x*size,p.y*size,size,size);
   });
 }
-drawGrid();
+
+let isPainting=false;
+let paintTimer=null;
+let paintedSet=new Set();
+
+function paintCell(x,y){
+  const key=x+","+y;
+  if(paintedSet.has(key)) return;
+  const idx=currentFloor.points.findIndex(p=>p.x===x&&p.y===y);
+  if(idx>=0) currentFloor.points.splice(idx,1);
+  currentFloor.points.push({x,y,type:"wall",color:"#333"});
+  paintedSet.add(key);
+}
+
+canvas.addEventListener("mousedown",e=>{
+  if(e.button!==0||!currentFloor) return;
+  paintTimer=setTimeout(()=>{
+    isPainting=true;
+    paintedSet.clear();
+    paintCell(
+      Math.floor(e.offsetX/size),
+      Math.floor(e.offsetY/size)
+    );
+    drawGrid();
+  },200);
+});
+
+canvas.addEventListener("mousemove",e=>{
+  if(!isPainting) return;
+  paintCell(
+    Math.floor(e.offsetX/size),
+    Math.floor(e.offsetY/size)
+  );
+  drawGrid();
+});
+
+canvas.addEventListener("mouseup",()=>{
+  clearTimeout(paintTimer);
+  isPainting=false;
+  paintedSet.clear();
+});
+
+canvas.addEventListener("mouseleave",()=>{
+  clearTimeout(paintTimer);
+  isPainting=false;
+  paintedSet.clear();
+});
+
+canvas.addEventListener("click",e=>{
+  if(isPainting||!currentFloor) return;
+  const x=Math.floor(e.offsetX/size);
+  const y=Math.floor(e.offsetY/size);
+  const idx=currentFloor.points.findIndex(p=>p.x===x&&p.y===y);
+  if(idx>=0) currentFloor.points.splice(idx,1);
+  else currentFloor.points.push({x,y,type:"wall",color:"#333"});
+  drawGrid();
+});
 
 /* ================== CONTEXT MENU ================== */
 const menu=document.getElementById("context-menu");
 const menuItems=document.getElementById("context-items");
 let contextPos=null;
+
 document.addEventListener("click",()=>menu.style.display="none");
 
-canvas.addEventListener("click", e=>{
-  if(!currentFloor) return;
-  const x=Math.floor(e.offsetX/size);
-  const y=Math.floor(e.offsetY/size);
-  const idx = currentFloor.points.findIndex(p=>p.x===x && p.y===y);
-  if(idx>=0){ currentFloor.points.splice(idx,1); } 
-  else { currentFloor.points.push({x,y,type:"wall",color:"#333"}); }
-  drawGrid();
-});
-
-canvas.addEventListener("contextmenu", e=>{
+canvas.addEventListener("contextmenu",e=>{
   e.preventDefault();
   if(!currentFloor) return;
   const x=Math.floor(e.offsetX/size);
@@ -239,14 +284,11 @@ canvas.addEventListener("contextmenu", e=>{
   POINT_TYPES.forEach(t=>{
     const a=document.createElement("a");
     a.className="dropdown-item is-flex is-align-items-center";
-    const box=document.createElement("span");
-    box.style.width="14px"; box.style.height="14px"; box.style.background=t.color; box.style.marginRight="8px";
-    const text=document.createElement("span"); text.textContent=t.name;
-    a.appendChild(box); a.appendChild(text);
+    a.innerHTML=`<span style="width:14px;height:14px;background:${t.color};margin-right:8px"></span>${t.name}`;
     a.onclick=()=>{
-      const idx = currentFloor.points.findIndex(p=>p.x===contextPos.x && p.y===contextPos.y);
+      const idx=currentFloor.points.findIndex(p=>p.x===x&&p.y===y);
       if(idx>=0) currentFloor.points.splice(idx,1);
-      currentFloor.points.push({x:contextPos.x,y:contextPos.y,type:t.type,color:t.color});
+      currentFloor.points.push({x,y,type:t.type,color:t.color});
       menu.style.display="none";
       drawGrid();
     };
@@ -264,22 +306,15 @@ function submitMap(){
     headers:{"Content-Type":"application/json"},
     body:JSON.stringify(mapData)
   }).then(res=>{
-    if(res.redirected){
-      window.location.href=res.url;
-    } else {
-      window.location.reload();
-    }
-  }).catch(e=>{
-    console.error(e);
-    alert("Map submission failed");
+    if(res.redirected) location.href=res.url;
+    else location.reload();
   });
 }
 
-/* ================== INITIALIZE ================== */
+/* ================== INIT ================== */
 document.addEventListener("DOMContentLoaded",()=>{
-  const urlParams = new URLSearchParams(window.location.search);
-  const mapId = urlParams.get("id");
-  if(mapId) loadMap(mapId);
+  const id=new URLSearchParams(location.search).get("id");
+  if(id) loadMap(id);
 });
 </script>
 
