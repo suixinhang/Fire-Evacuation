@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Map List</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Bulma -->
+    <link
+        rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css"
+    >
+</head>
+<body>
+
+<section class="section">
+    <div class="container" style="max-width: 640px;">
+
+        <div class="level mb-5">
+            <div class="level-left">
+                <h1 class="title is-4">Maps</h1>
+            </div>
+            <div class="level-right">
+                <a href="/create_map/"
+                   class="button is-primary is-outlined">
+                    + NEW
+                </a>
+            </div>
+        </div>
+
+        <div id="map-list">
+            <p class="has-text-grey">Loading...</p>
+        </div>
+
+    </div>
+</section>
+
+<script>
+    const listEl = document.getElementById("map-list");
+
+    fetch("/api/map_data_list/", {
+        method: "GET",
+        headers: { "Accept": "application/json" }
+    })
+    .then(res => {
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        return res.json();
+    })
+    .then(data => {
+        listEl.innerHTML = "";
+
+        if (!Array.isArray(data) || data.length === 0) {
+            listEl.innerHTML =
+                "<p class='has-text-grey'>No maps yet.</p>";
+            return;
+        }
+
+        data.forEach(item => {
+            const wrapper = document.createElement("div");
+            wrapper.className = "mb-3";
+            wrapper.style.display = "flex"; // 横向排列按钮
+            wrapper.style.gap = "0.5rem";   // 按钮间距
+
+            // 编辑按钮
+            const editBtn = document.createElement("a");
+            editBtn.className =
+                "button is-link is-outlined is-medium is-fullwidth";
+            editBtn.href = `/edit_map/?id=${item.id}`;
+            editBtn.textContent = item.name || `Map ${item.id}`;
+            editBtn.style.flex = "1"; // 占满剩余空间
+
+            // 删除按钮
+            const delBtn = document.createElement("a");
+            delBtn.className = "button is-danger is-outlined";
+            delBtn.href = `/del_map/?id=${item.id}`;
+            delBtn.textContent = "✕"; // 小叉号
+            delBtn.style.width = "3rem"; // 固定宽度
+
+            wrapper.appendChild(editBtn);
+            wrapper.appendChild(delBtn);
+            listEl.appendChild(wrapper);
+        });
+    })
+    .catch(err => {
+        listEl.innerHTML =
+            `<p class="has-text-danger">Error: ${err.message}</p>`;
+    });
+</script>
+
+
+</body>
+</html>

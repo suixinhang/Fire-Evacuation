@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Create Map</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+<style>
+  body { user-select: none; }
+  canvas { background: #fff; border: 1px solid #ccc; }
+  .menu-list li { display:flex; align-items:center; margin-bottom:3px; }
+  .menu-list li a { flex-grow:1; cursor:pointer; }
+</style>
+</head>
+<body>
+
+<section class="section">
+<div class="container is-fluid">
+
+  <div class="mb-3 is-flex is-align-items-center">
+    <h1 class="title is-4 mr-2" id="map-title">Untitled Map</h1>
+    <button class="button is-small is-light" onclick="openTitleModal()">✏️</button>
+  </div>
+
+  <div class="columns">
+    <div class="column is-3">
+      <aside class="menu">
+        <button class="button is-success is-fullwidth mb-2" onclick="submitMap()">Create Map</button>
+        <p class="menu-label">Floors</p>
+        <ul class="menu-list" id="floor-list"></ul>
+      </aside>
+      <button class="button is-fullwidth is-link is-outlined mt-3"
+        onclick="openFloorModal()">+ Add Floor</button>
+    </div>
+    <div class="column is-9">
+      <canvas id="grid" width="1200" height="750"></canvas>
+    </div>
+  </div>
+</div>
+</section>
+
+<div id="context-menu" class="dropdown is-active" style="position:absolute; display:none; z-index:100;">
+  <div class="dropdown-menu">
+    <div class="dropdown-content" id="context-items"></div>
+  </div>
+</div>
+
+<div class="modal" id="title-modal">
+  <div class="modal-background" onclick="closeTitleModal()"></div>
+  <div class="modal-card">
+    <header class="modal-card-head"><p class="modal-card-title">Edit Title</p></header>
+    <section class="modal-card-body">
+      <input class="input" id="title-input">
+    </section>
+    <footer class="modal-card-foot">
+      <button class="button is-success" onclick="saveTitle()">Save</button>
+    </footer>
+  </div>
+</div>
+
+<div class="modal" id="floor-modal">
+  <div class="modal-background" onclick="closeFloorModal()"></div>
+  <div class="modal-card">
+    <header class="modal-card-head"><p class="modal-card-title">Floor</p></header>
+    <section class="modal-card-body">
+      <input class="input" id="floor-input" placeholder="Floor name">
+    </section>
+    <footer class="modal-card-foot">
+      <button class="button is-success" onclick="saveFloor()">Save</button>
+    </footer>
+  </div>
+</div>
+
+<script>
+const POINT_TYPES = [
+  { type: "wall", name: "Wall", color: "#333" },
+  { type: "responder", name: "Responder", color: "#3273dc" },
+  { type: "occupant", name: "Occupant", color: "#fa6500" },
+  { type: "stair", name: "Stair", color: "#23d160" },
+  { type: "startpoint", name: "Start Point", color: "#ffd700" }
+];
+let currentType = POINT_TYPES[0];
+const mapData = { title:"Untitled Map", floors:[], id: "" };
+let currentFloor = null;
+let editingFloor = null;
+
+/* ================== FLOORS ================== */
+function renderFloors() {
+  const ul = document.getElementById("floor-list");
+  ul.innerHTML = "";
+  mapData.floors.forEach((f,i)=>{
+    const li = document.createElement("li");
+    const a = document.createElement("a");
+    a.textContent = f.name;
+    if(f===currentFloor) a.classList.add("is-active");
+    a.onclick = () => { currentFloor=f; updateFloorActive(); drawGrid(); };
+    a.ondblclick = () => openFloorModal(f);
+    let timer;
+    a.onmousedown = () => { timer=setTimeout(()=>a.draggable=true,300); };
+    a.onmouseup = () => { clearTimeout(timer); };
+    a.ondragstart = e => e.dataTransfer.setData("index",i);
+    a.ondragover = e => e.preventDefault();
+    a.ondrop = e => {
+      const from=e.dataTransfer.getData("index");
+      mapData.floors.splice(i,0,mapData.floors.splice(from,1)[0]);
+      renderFloors();
+    };
+    const del = document.createElement("button");
+    del.className="button is-small is-danger ml-2";
+    del.style.flexShrink="0";
+    del.textContent="×";
+    del.onclick = e=>{
+      e.stopPropagation();
+      if(currentFloor===f) currentFloor=null;
+      mapData.floors.splice(i,1);
+      renderFloors();
+      drawGrid();
+    };
+    li.appendChild(a);
+    li.appendChild(del);
+    ul.appendChild(li);
+  });
+}
+
+function updateFloorActive(){
+  const items = document.querySelectorAll("#floor-list li a");
+  items.forEach(a=>{
+    a.classList.remove("is-active");
+    if(mapData.floors.find(f=>f.name===a.textContent)===currentFloor){
+      a.classList.add("is-active");
+    }
+  });
+}
+
+function openFloorModal(f=null){
+  editingFloor=f;
+  document.getElementById("floor-input").value=f?f.name:"";
+  document.getElementById("floor-modal").classList.add("is-active");
+}
+function closeFloorModal(){ document.getElementById("floor-modal").classList.remove("is-active"); }
+function saveFloor(){
+  const name=document.getElementById("floor-input").value.trim();
+  if(!name) return;
+  if(!editingFloor){
+    const f={name,points:[]};
+    mapData.floors.push(f);
+    currentFloor=f;
+  } else { editingFloor.name=name; }
+  closeFloorModal();
+  renderFloors();
+}
+
+/* ================== TITLE ================== */
+function openTitleModal(){ document.getElementById("title-input").value=mapData.title; document.getElementById("title-modal").classList.add("is-active"); }
+function closeTitleModal(){ document.getElementById("title-modal").classList.remove("is-active"); }
+function saveTitle(){ mapData.title=document.getElementById("title-input").value; document.getElementById("map-title").textContent=mapData.title; closeTitleModal(); }
+
+/* ================== GRID ================== */
+const canvas=document.getElementById("grid");
+const ctx=canvas.getContext("2d");
+const size=25;
+
+function drawGrid(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.strokeStyle="#eee";
+  ctx.fillStyle="#666";
+  ctx.font="10px sans-serif";
+  for(let x=0;x<=canvas.width;x+=size){
+    ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,canvas.height); ctx.stroke();
+    ctx.fillText(x/size,x+2,10);
+  }
+  for(let y=0;y<=canvas.height;y+=size){
+    ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(canvas.width,y); ctx.stroke();
+    ctx.fillText(y/size,2,y-2);
+  }
+  if(!currentFloor) return;
+  currentFloor.points.forEach(p=>{
+    ctx.fillStyle=p.color||"#000";
+    ctx.fillRect(p.x*size,p.y*size,size,size);
+  });
+}
+drawGrid();
+
+/* ================== CONTEXT MENU ================== */
+const menu=document.getElementById("context-menu");
+const menuItems=document.getElementById("context-items");
+let contextPos=null;
+document.addEventListener("click",()=>menu.style.display="none");
+
+canvas.addEventListener("click", e=>{
+  if(!currentFloor) return;
+  const x=Math.floor(e.offsetX/size);
+  const y=Math.floor(e.offsetY/size);
+  const idx = currentFloor.points.findIndex(p=>p.x===x && p.y===y);
+  if(idx>=0){ currentFloor.points.splice(idx,1); } 
+  else { currentFloor.points.push({x,y,type:"wall",color:"#333"}); }
+  drawGrid();
+});
+
+canvas.addEventListener("contextmenu", e=>{
+  e.preventDefault();
+  if(!currentFloor) return;
+  const x=Math.floor(e.offsetX/size);
+  const y=Math.floor(e.offsetY/size);
+  contextPos={x,y};
+  menuItems.innerHTML="";
+  POINT_TYPES.forEach(t=>{
+    const a=document.createElement("a");
+    a.className="dropdown-item is-flex is-align-items-center";
+    const box=document.createElement("span");
+    box.style.width="14px"; box.style.height="14px"; box.style.background=t.color; box.style.marginRight="8px";
+    const text=document.createElement("span"); text.textContent=t.name;
+    a.appendChild(box); a.appendChild(text);
+    a.onclick=()=>{
+      const idx = currentFloor.points.findIndex(p=>p.x===contextPos.x && p.y===contextPos.y);
+      if(idx>=0) currentFloor.points.splice(idx,1);
+      currentFloor.points.push({x:contextPos.x,y:contextPos.y,type:t.type,color:t.color});
+      menu.style.display="none";
+      drawGrid();
+    };
+    menuItems.appendChild(a);
+  });
+  menu.style.left=e.pageX+"px";
+  menu.style.top=e.pageY+"px";
+  menu.style.display="block";
+});
+
+/* ================== SUBMIT ================== */
+function submitMap(){
+  fetch("/create_map/",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify(mapData)
+  }).then(res=>res.json())
+  .then(r=>{
+    if(r.success) window.location.href="/";
+    else alert("Map creation failed");
+  })
+  .catch(e=>{
+    console.error(e);
+    alert("Map creation failed");
+  });
+}
+</script>
+
+</body>
+</html>
