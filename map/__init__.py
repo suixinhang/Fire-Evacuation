@@ -3,8 +3,11 @@ import json
 import pickle
 import pathlib
 
-MAP_DATA_ROOT = pathlib.Path(__file__).parent / 'map_data'
+MAP_DATA_ROOT = pathlib.Path(__file__).parent.parent / 'map_data'
 MAP_DATA_LIST = []
+
+import logging
+logger = logging.getLogger("FIRE_EVACUATION")
 
 class Map:
 
@@ -34,6 +37,7 @@ class Map:
             self.save_to_disk()
     
     def save_to_disk(self):
+        logger.debug(f"Auto save map.")
         try:
             with open(self.__file_path, "wb") as f:
                 pickle.dump({
@@ -74,7 +78,7 @@ class Map:
         self.__map_data = {}
         self.save_to_disk()
 
-
+logger.debug(f"Load map list...")
 if not (MAP_DATA_ROOT / 'list.json').exists():
     with open(MAP_DATA_ROOT / 'list.json', 'w', encoding='utf-8') as fp:
         fp.write("[]")
@@ -82,16 +86,19 @@ else:
     with open(MAP_DATA_ROOT / 'list.json', 'r', encoding='utf-8') as fp:
         MAP_DATA_LIST = json.loads(fp.read())
 
+logger.debug(f"Load maps...")
 for i in range(len(MAP_DATA_LIST)):
     MAP_DATA_LIST[i]["map_obj"] = Map(MAP_DATA_LIST[i]["id"], MAP_DATA_LIST[i]["name"])
 
 def get_map_list():
+    logger.debug(f"Get map list.")
     tmp = []
     for i in MAP_DATA_LIST:
         tmp.append({"id": i["id"], "name": i["name"]})
     return tmp
 
 def save_map_list():
+    logger.debug(f"Save map list.")
     tmp = []
     for i in MAP_DATA_LIST:
         tmp.append({"id": i["id"], "name": i["name"]})
@@ -105,9 +112,11 @@ def create_map(map_name, map_data):
         "name": map_obj.get_name(),
         "map_obj": map_obj,
     })
+    logger.info(f"Create map, name: {map_name}, id: {map_obj.get_id()}.")
     save_map_list()
 
 def delete_map(map_id):
+    logger.info(f"Delete map, id: {map_id}")
     global MAP_DATA_LIST
     for i, item in enumerate(MAP_DATA_LIST):
         if item["id"] == map_id:

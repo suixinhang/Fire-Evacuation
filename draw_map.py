@@ -14,17 +14,11 @@ import logging
 import map
 from map import MAP_DATA_LIST
 
-logger = logging.getLogger("FIRE_EVACUATION")
-logger.setLevel(logging.DEBUG)
-console_handler = logging.StreamHandler()
-if os.getenv('FIRE_EVACUATION_DRAW_DEBUG', '0') == '0':
-    console_handler.setLevel(logging.INFO)
-else:
-    console_handler.setLevel(logging.DEBUG)
-formatter = logging.Formatter('[%(asctime)s](%(module)s)[%(levelname)s] %(message)s')
-console_handler.setFormatter(formatter)
-logger.addHandler(console_handler)
+HTTP_ADDR = os.getenv('FIRE_EVACUATION_HTTP_ADDR', '0.0.0.0')
+HTTP_PORT = int(os.getenv('FIRE_EVACUATION_HTTP_PORT', '8000'))
 
+import logging
+logger = logging.getLogger("FIRE_EVACUATION")
 
 app = Flask(__name__)
 
@@ -104,6 +98,6 @@ log = logging.getLogger('werkzeug')
 log.disabled = True
 cli = sys.modules['flask.cli']
 cli.show_server_banner = lambda *x: None
-logger.info(f"Start Draw Window.")
+logger.info(f"Start Draw Server http://{HTTP_ADDR}:{HTTP_PORT} .")
 
-app.run("0.0.0.0", 8000, debug=True)
+app.run(HTTP_ADDR, HTTP_PORT)
