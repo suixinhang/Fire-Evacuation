@@ -58,23 +58,21 @@
         data.forEach(item => {
             const wrapper = document.createElement("div");
             wrapper.className = "mb-3";
-            wrapper.style.display = "flex"; // 横向排列按钮
-            wrapper.style.gap = "0.5rem";   // 按钮间距
+            wrapper.style.display = "flex";
+            wrapper.style.gap = "0.5rem";
 
-            // 编辑按钮
             const editBtn = document.createElement("a");
             editBtn.className =
                 "button is-link is-outlined is-medium is-fullwidth";
             editBtn.href = `/edit_map/?id=${item.id}`;
             editBtn.textContent = item.name || `Map ${item.id}`;
-            editBtn.style.flex = "1"; // 占满剩余空间
+            editBtn.style.flex = "1";
 
-            // 删除按钮
             const delBtn = document.createElement("a");
             delBtn.className = "button is-danger is-outlined";
             delBtn.href = `/del_map/?id=${item.id}`;
-            delBtn.textContent = "✕"; // 小叉号
-            delBtn.style.width = "3rem"; // 固定宽度
+            delBtn.textContent = "✕";
+            delBtn.style.width = "3rem";
 
             wrapper.appendChild(editBtn);
             wrapper.appendChild(delBtn);
