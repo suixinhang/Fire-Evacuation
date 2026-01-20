@@ -2,199 +2,375 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Map Editor</title>
+<title>Map Runtime Viewer</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+
+<link rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
 
 <style>
-body { user-select: none; }
-canvas { border: 1px solid #ccc; background: #fff; }
-.menu-list li { display:flex; align-items:center; }
-.menu-list li a { flex-grow:1; cursor:pointer; }
+  body { background: #f5f5f5; }
+  canvas { background: #fff; border: 1px solid #ccc; }
+  .legend-box {
+    background: #fff;
+    border: 1px solid #ddd;
+    padding: 12px;
+    border-radius: 6px;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    font-size: 14px;
+    margin-bottom: 6px;
+  }
+  .legend-color {
+    width: 18px;
+    height: 18px;
+    margin-right: 8px;
+    border: 1px solid #999;
+  }
 </style>
 </head>
 
 <body>
-
 <section class="section">
 <div class="container is-fluid">
-
-<div class="level mb-3">
-  <div class="level-left">
-    <strong>View:</strong>
-    <button class="button is-small ml-2" id="view-type">Block Type</button>
-    <button class="button is-small ml-1" id="view-status">Block Status</button>
-  </div>
-</div>
-
 <div class="columns">
-  <div class="column is-3">
-    <aside class="menu">
-      <p class="menu-label">Floors</p>
-      <ul class="menu-list" id="floor-list"></ul>
-      <button class="button is-link is-light is-fullwidth mt-2" id="add-floor">
-        + Add Floor
-      </button>
-    </aside>
+
+<!-- 左侧画布 -->
+<div class="column is-9">
+
+  <div class="level mb-3">
+    <div class="level-left">
+
+      <div class="level-item mr-3">
+        <div class="select is-small">
+          <select id="floorSelect"></select>
+        </div>
+      </div>
+
+      <div class="level-item buttons">
+        <button class="button is-small" onclick="setView('block_type')">Block Type</button>
+        <button class="button is-small" onclick="setView('block_status')">Block Status</button>
+        <button class="button is-small" onclick="setView('smoke_density')">Smoke</button>
+      </div>
+
+    </div>
   </div>
 
-  <div class="column is-9">
-    <canvas id="canvas" width="1000" height="700"></canvas>
+  <canvas id="canvas"></canvas>
+</div>
+
+<!-- 右侧图例 -->
+<div class="column is-3">
+  <div class="legend-box">
+    <p class="has-text-weight-semibold mb-2">Legend</p>
+    <div id="legend"></div>
   </div>
 </div>
 
+</div>
 </div>
 </section>
 
+<!-- Tooltip -->
+<div id="tooltip"
+     style="
+       position: fixed;
+       pointer-events: none;
+       background: rgba(0,0,0,0.85);
+       color: #fff;
+       padding: 6px 8px;
+       font-size: 12px;
+       border-radius: 4px;
+       display: none;
+       z-index: 9999;
+     ">
+</div>
+
 <script>
+/* ================= 基础配置 ================= */
+
 const GRID = 25;
+
+const POINT_TYPES = [
+  { type: "wall",       name: "Wall",        color: "#333" },
+  { type: "responder",  name: "Responder",   color: "#3273dc" },
+  { type: "occupant",   name: "Occupant",    color: "#fa6500" },
+  { type: "stair",      name: "Stair",       color: "#23d160" },
+  { type: "startpoint", name: "Start Point", color: "#ffd700" }
+];
+
+const TYPE_MAP = {};
+POINT_TYPES.forEach(p => TYPE_MAP[p.type] = p);
+
+/* ================= DOM ================= */
+
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
+const tooltip = document.getElementById("tooltip");
+const legend = document.getElementById("legend");
+const floorSelect = document.getElementById("floorSelect");
 
-let floors = [];
+/* ================= 状态 ================= */
+
+let mapData = [];
+let blockStatus = {};
+let smokeDensity = {};
+
 let currentFloor = null;
-let viewMode = "type";
-let blockStatus = [];
+let viewMode = "block_type";
+let minX = 0, minY = 0;
+let maxX = 0, maxY = 0;
 
-const COLORS = {
-  wall: "#333",
-  stair: "#23d160",
-  responder: "#3273dc",
-  occupant: "#fa6500",
-  watched: "#48c78e",
-  unwatched: "#b5b5b5",
-  uncertain: "#ffdd57"
+/* ================= 工具 ================= */
+
+function smokeColor(v) {
+  if (v === -1) return "#000000"; // -1 显示黑色
+  const value = Math.max(0, Math.min(100, v));
+  const hue = 240 - value * 2.4;
+  return `hsl(${hue},100%,50%)`;
+}
+
+function drawGrid() {
+  ctx.strokeStyle = "#e6e6e6";
+  for (let x = 0; x <= canvas.width; x += GRID) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, canvas.height);
+    ctx.stroke();
+  }
+  for (let y = 0; y <= canvas.height; y += GRID) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(canvas.width, y);
+    ctx.stroke();
+  }
+}
+
+/* ================= 图例 ================= */
+
+function updateLegend() {
+  legend.innerHTML = "";
+
+  let items = [];
+
+  if (viewMode === "block_type") {
+    items = POINT_TYPES.map(p => [p.color, p.name]);
+  }
+
+  if (viewMode === "block_status") {
+    items = [
+      ["#23d160", "watched"],
+      ["#fa6500", "unwatched"],
+      ["#ffd324", "uncertain"],
+      ["transparent", "null (no overlay)"]
+    ];
+  }
+
+  if (viewMode === "smoke_density") {
+    items = [
+      ["#000000", "-1"],
+      [smokeColor(0), "0"],
+      [smokeColor(50), "50"],
+      [smokeColor(100), "100"]
+    ];
+  }
+
+  items.forEach(([color, text]) => {
+    const row = document.createElement("div");
+    row.className = "legend-item";
+    const box = document.createElement("div");
+    box.className = "legend-color";
+    box.style.background = color;
+    row.appendChild(box);
+    row.appendChild(document.createTextNode(text));
+    legend.appendChild(row);
+  });
+}
+
+/* ================= 视图 ================= */
+
+function setView(v) {
+  viewMode = v;
+  updateLegend();
+  draw();
+}
+
+/* ================= 楼层 ================= */
+
+floorSelect.onchange = () => {
+  currentFloor = floorSelect.value;
+  draw();
 };
 
-function fetchBlockType(){
-  return fetch("/api/block_type")
-    .then(r=>r.json())
-    .then(data=>{
-      floors = Array.isArray(data) ? data : [];
-      if(!currentFloor && floors.length) currentFloor = floors[0];
-      renderFloors();
-      draw();
-    });
-}
-
-function fetchBlockStatus(){
-  return fetch("/api/block_status")
-    .then(r=>r.json())
-    .then(data=>{
-      blockStatus = Array.isArray(data) ? data : [];
-      draw();
-    });
-}
-
-function saveBlockType(){
-  fetch("/api/block_type",{
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify(floors)
+function updateFloorSelect() {
+  floorSelect.innerHTML = "";
+  mapData.forEach(f => {
+    const opt = document.createElement("option");
+    opt.value = f.name;
+    opt.textContent = f.name;
+    if (f.name === currentFloor) opt.selected = true;
+    floorSelect.appendChild(opt);
   });
 }
 
-function renderFloors(){
-  const ul = document.getElementById("floor-list");
-  ul.innerHTML = "";
-  floors.forEach(f=>{
-    const li = document.createElement("li");
-    const a = document.createElement("a");
-    a.textContent = f.name;
-    if(f === currentFloor) a.classList.add("is-active");
-    a.onclick = ()=>{
-      currentFloor = f;
-      renderFloors();
-      draw();
-    };
-    li.appendChild(a);
-    ul.appendChild(li);
-  });
-}
+/* ================= 绘制 ================= */
 
-function drawGrid(){
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-  ctx.strokeStyle = "#eee";
-  for(let x=0;x<=canvas.width;x+=GRID){
-    ctx.beginPath();
-    ctx.moveTo(x,0);
-    ctx.lineTo(x,canvas.height);
-    ctx.stroke();
-  }
-  for(let y=0;y<=canvas.height;y+=GRID){
-    ctx.beginPath();
-    ctx.moveTo(0,y);
-    ctx.lineTo(canvas.width,y);
-    ctx.stroke();
-  }
-}
+function computeBounds() {
+  let xs = [], ys = [];
 
-function draw(){
-  drawGrid();
-  if(!currentFloor) return;
-
-  if(viewMode === "type"){
-    currentFloor.points.forEach(p=>{
-      ctx.fillStyle = COLORS[p.type] || "#000";
-      ctx.fillRect(p.x*GRID, p.y*GRID, GRID, GRID);
+  const floor = mapData.find(f => f.name === currentFloor);
+  if (floor) {
+    floor.points.forEach(p => {
+      xs.push(p.x);
+      ys.push(p.y);
     });
-  } else {
-    const idx = floors.indexOf(currentFloor);
-    const grid = blockStatus[idx];
-    if(!grid) return;
-    for(let y=0;y<grid.length;y++){
-      for(let x=0;x<grid[y].length;x++){
-        const s = grid[y][x];
-        if(!s) continue;
-        ctx.fillStyle = COLORS[s] || "#000";
-        ctx.fillRect(x*GRID, y*GRID, GRID, GRID);
-      }
+  }
+
+  const s = blockStatus[currentFloor] || {};
+  Object.keys(s).forEach(k => {
+    const [x,y] = k.split(",").map(Number);
+    xs.push(x); ys.push(y);
+  });
+
+  const d = smokeDensity[currentFloor] || {};
+  Object.keys(d).forEach(k => {
+    const [x,y] = k.split(",").map(Number);
+    xs.push(x); ys.push(y);
+  });
+
+  if (!xs.length) return false;
+
+  minX = Math.min(...xs);
+  minY = Math.min(...ys);
+  maxX = Math.max(...xs);
+  maxY = Math.max(...ys);
+
+  canvas.width  = (maxX - minX + 1) * GRID;
+  canvas.height = (maxY - minY + 1) * GRID;
+
+  return true;
+}
+
+function draw() {
+  if (!currentFloor) return;
+  if (!computeBounds()) return;
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  /* 1️⃣ block_type：只画 points */
+  if (viewMode === "block_type") {
+    const floor = mapData.find(f => f.name === currentFloor);
+    if (floor) {
+      floor.points.forEach(p => {
+        ctx.fillStyle = TYPE_MAP[p.type]?.color || "#999";
+        ctx.fillRect(
+          (p.x - minX) * GRID,
+          (p.y - minY) * GRID,
+          GRID, GRID
+        );
+      });
     }
   }
+
+  /* 2️⃣ block_status：完全不看 points */
+  if (viewMode === "block_status") {
+    const s = blockStatus[currentFloor] || {};
+    Object.entries(s).forEach(([key, val]) => {
+      if (val === "null") return;
+      if (val === "watched")   ctx.fillStyle = "#23d160";
+      if (val === "unwatched") ctx.fillStyle = "#fa6500";
+      if (val === "uncertain") ctx.fillStyle = "#ffd324";
+
+      const [x,y] = key.split(",").map(Number);
+      ctx.fillRect(
+        (x - minX) * GRID,
+        (y - minY) * GRID,
+        GRID, GRID
+      );
+    });
+  }
+
+  /* 3️⃣ smoke_density：完全不看 points */
+  if (viewMode === "smoke_density") {
+    const d = smokeDensity[currentFloor] || {};
+    Object.entries(d).forEach(([key, v]) => {
+      const [x,y] = key.split(",").map(Number);
+      ctx.fillStyle = smokeColor(v);
+      ctx.fillRect(
+        (x - minX) * GRID,
+        (y - minY) * GRID,
+        GRID, GRID
+      );
+    });
+  }
+
+  drawGrid();
 }
 
-canvas.addEventListener("click",e=>{
-  if(viewMode !== "type") return;
-  if(!currentFloor) return;
+/* ================= Tooltip ================= */
 
-  const x = Math.floor(e.offsetX/GRID);
-  const y = Math.floor(e.offsetY/GRID);
+canvas.addEventListener("mousemove", e => {
+  const rect = canvas.getBoundingClientRect();
+  const cx = e.clientX - rect.left;
+  const cy = e.clientY - rect.top;
 
-  const idx = currentFloor.points.findIndex(p=>p.x===x&&p.y===y);
-  if(idx>=0){
-    currentFloor.points.splice(idx,1);
-  }else{
-    currentFloor.points.push({x,y,type:"wall"});
+  const x = Math.floor(cx / GRID) + minX;
+  const y = Math.floor(cy / GRID) + minY;
+  const key = `${x},${y}`;
+
+  let text = `(${x}, ${y})`;
+
+  if (viewMode === "block_type") {
+    const floor = mapData.find(f => f.name === currentFloor);
+    const point = floor?.points.find(p => p.x === x && p.y === y);
+    if (!point) return tooltip.style.display = "none";
+    text += `<br>Type: ${TYPE_MAP[point.type]?.name || point.type}`;
   }
-  saveBlockType();
-  draw();
+
+  if (viewMode === "block_status") {
+    text += `<br>Status: ${blockStatus[currentFloor]?.[key] ?? "null"}`;
+  }
+
+  if (viewMode === "smoke_density") {
+    text += `<br>Smoke: ${smokeDensity[currentFloor]?.[key] ?? 0}`;
+  }
+
+  tooltip.innerHTML = text;
+  tooltip.style.left = e.clientX + 12 + "px";
+  tooltip.style.top = e.clientY + 12 + "px";
+  tooltip.style.display = "block";
 });
 
-document.getElementById("add-floor").onclick = ()=>{
-  const name = prompt("Floor name");
-  if(!name) return;
-  const f = {name, points:[]};
-  floors.push(f);
-  currentFloor = f;
-  saveBlockType();
-  renderFloors();
-  draw();
-};
+canvas.addEventListener("mouseleave", () => {
+  tooltip.style.display = "none";
+});
 
-document.getElementById("view-type").onclick = ()=>{
-  viewMode = "type";
-  draw();
-};
+/* ================= 数据 ================= */
 
-document.getElementById("view-status").onclick = ()=>{
-  viewMode = "status";
-  fetchBlockStatus();
-};
+function fetchAll() {
+  fetch("/api/block_type").then(r => r.json()).then(d => {
+    mapData = d;
+    if (!currentFloor && d.length) currentFloor = d[0].name;
+    updateFloorSelect();
+    draw();
+  });
 
-fetchBlockType();
-setInterval(()=>{
-  if(viewMode === "status") fetchBlockStatus();
-},1000);
+  fetch("/api/block_status").then(r => r.json()).then(d => {
+    blockStatus = d;
+    draw();
+  });
+
+  fetch("/api/smoke_density").then(r => r.json()).then(d => {
+    smokeDensity = d;
+    draw();
+  });
+}
+
+updateLegend();
+fetchAll();
+setInterval(fetchAll, 1000);
 </script>
 
 </body>
