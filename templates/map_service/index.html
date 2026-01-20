@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Map Editor</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+
+<style>
+body { user-select: none; }
+canvas { border: 1px solid #ccc; background: #fff; }
+.menu-list li { display:flex; align-items:center; }
+.menu-list li a { flex-grow:1; cursor:pointer; }
+</style>
+</head>
+
+<body>
+
+<section class="section">
+<div class="container is-fluid">
+
+<div class="level mb-3">
+  <div class="level-left">
+    <strong>View:</strong>
+    <button class="button is-small ml-2" id="view-type">Block Type</button>
+    <button class="button is-small ml-1" id="view-status">Block Status</button>
+  </div>
+</div>
+
+<div class="columns">
+  <div class="column is-3">
+    <aside class="menu">
+      <p class="menu-label">Floors</p>
+      <ul class="menu-list" id="floor-list"></ul>
+      <button class="button is-link is-light is-fullwidth mt-2" id="add-floor">
+        + Add Floor
+      </button>
+    </aside>
+  </div>
+
+  <div class="column is-9">
+    <canvas id="canvas" width="1000" height="700"></canvas>
+  </div>
+</div>
+
+</div>
+</section>
+
+<script>
+const GRID = 25;
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+
+let floors = [];
+let currentFloor = null;
+let viewMode = "type";
+let blockStatus = [];
+
+const COLORS = {
+  wall: "#333",
+  stair: "#23d160",
+  responder: "#3273dc",
+  occupant: "#fa6500",
+  watched: "#48c78e",
+  unwatched: "#b5b5b5",
+  uncertain: "#ffdd57"
+};
+
+function fetchBlockType(){
+  return fetch("/api/block_type")
+    .then(r=>r.json())
+    .then(data=>{
+      floors = Array.isArray(data) ? data : [];
+      if(!currentFloor && floors.length) currentFloor = floors[0];
+      renderFloors();
+      draw();
+    });
+}
+
+function fetchBlockStatus(){
+  return fetch("/api/block_status")
+    .then(r=>r.json())
+    .then(data=>{
+      blockStatus = Array.isArray(data) ? data : [];
+      draw();
+    });
+}
+
+function saveBlockType(){
+  fetch("/api/block_type",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify(floors)
+  });
+}
+
+function renderFloors(){
+  const ul = document.getElementById("floor-list");
+  ul.innerHTML = "";
+  floors.forEach(f=>{
+    const li = document.createElement("li");
+    const a = document.createElement("a");
+    a.textContent = f.name;
+    if(f === currentFloor) a.classList.add("is-active");
+    a.onclick = ()=>{
+      currentFloor = f;
+      renderFloors();
+      draw();
+    };
+    li.appendChild(a);
+    ul.appendChild(li);
+  });
+}
+
+function drawGrid(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.strokeStyle = "#eee";
+  for(let x=0;x<=canvas.width;x+=GRID){
+    ctx.beginPath();
+    ctx.moveTo(x,0);
+    ctx.lineTo(x,canvas.height);
+    ctx.stroke();
+  }
+  for(let y=0;y<=canvas.height;y+=GRID){
+    ctx.beginPath();
+    ctx.moveTo(0,y);
+    ctx.lineTo(canvas.width,y);
+    ctx.stroke();
+  }
+}
+
+function draw(){
+  drawGrid();
+  if(!currentFloor) return;
+
+  if(viewMode === "type"){
+    currentFloor.points.forEach(p=>{
+      ctx.fillStyle = COLORS[p.type] || "#000";
+      ctx.fillRect(p.x*GRID, p.y*GRID, GRID, GRID);
+    });
+  } else {
+    const idx = floors.indexOf(currentFloor);
+    const grid = blockStatus[idx];
+    if(!grid) return;
+    for(let y=0;y<grid.length;y++){
+      for(let x=0;x<grid[y].length;x++){
+        const s = grid[y][x];
+        if(!s) continue;
+        ctx.fillStyle = COLORS[s] || "#000";
+        ctx.fillRect(x*GRID, y*GRID, GRID, GRID);
+      }
+    }
+  }
+}
+
+canvas.addEventListener("click",e=>{
+  if(viewMode !== "type") return;
+  if(!currentFloor) return;
+
+  const x = Math.floor(e.offsetX/GRID);
+  const y = Math.floor(e.offsetY/GRID);
+
+  const idx = currentFloor.points.findIndex(p=>p.x===x&&p.y===y);
+  if(idx>=0){
+    currentFloor.points.splice(idx,1);
+  }else{
+    currentFloor.points.push({x,y,type:"wall"});
+  }
+  saveBlockType();
+  draw();
+});
+
+document.getElementById("add-floor").onclick = ()=>{
+  const name = prompt("Floor name");
+  if(!name) return;
+  const f = {name, points:[]};
+  floors.push(f);
+  currentFloor = f;
+  saveBlockType();
+  renderFloors();
+  draw();
+};
+
+document.getElementById("view-type").onclick = ()=>{
+  viewMode = "type";
+  draw();
+};
+
+document.getElementById("view-status").onclick = ()=>{
+  viewMode = "status";
+  fetchBlockStatus();
+};
+
+fetchBlockType();
+setInterval(()=>{
+  if(viewMode === "status") fetchBlockStatus();
+},1000);
+</script>
+
+</body>
+</html>
