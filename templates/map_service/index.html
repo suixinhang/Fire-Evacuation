@@ -127,10 +127,26 @@ let maxX = 0, maxY = 0;
 /* ================= 工具 ================= */
 
 function smokeColor(v) {
-  if (v === -1) return "#000000"; // -1 显示黑色
-  const value = Math.max(0, Math.min(100, v));
-  const hue = 240 - value * 2.4;
-  return `hsl(${hue},100%,50%)`;
+    if (v === -1) return "#000000"; // 墙壁显示深灰色
+    
+    const value = Math.max(0, Math.min(100, v));
+    let r, g, b;
+
+    if (value <= 50) {
+        // 0-50: 从 蓝色(0,0,255) 向 绿色(0,255,0) 过渡
+        const ratio = value / 50;
+        r = 0;
+        g = Math.round(255 * ratio);
+        b = Math.round(255 * (1 - ratio));
+    } else {
+        // 50-100: 从 绿色(0,255,0) 向 红色(255,0,0) 过渡
+        const ratio = (value - 50) / 50;
+        r = Math.round(255 * ratio);
+        g = Math.round(255 * (1 - ratio));
+        b = 0;
+    }
+
+    return `rgb(${r},${g},${b})`;
 }
 
 function drawGrid() {
@@ -260,20 +276,50 @@ function draw() {
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  /* 1️⃣ block_type：只画 points */
+  /* 1️⃣ block_type：只画建筑点位 */
   if (viewMode === "block_type") {
     const floor = mapData.find(f => f.name === currentFloor);
     if (floor) {
       floor.points.forEach(p => {
         ctx.fillStyle = TYPE_MAP[p.type]?.color || "#999";
-        ctx.fillRect(
-          (p.x - minX) * GRID,
-          (p.y - minY) * GRID,
-          GRID, GRID
-        );
+        ctx.fillRect((p.x - minX) * GRID, (p.y - minY) * GRID, GRID, GRID);
       });
     }
   }
+
+  /* 2️⃣ block_status：显示监控状态 */
+  if (viewMode === "block_status") {
+    const s = blockStatus[currentFloor] || {};
+    Object.entries(s).forEach(([key, val]) => {
+      if (val === "null") return;
+      if (val === "watched")   ctx.fillStyle = "#23d160";
+      if (val === "unwatched") ctx.fillStyle = "#fa6500";
+      if (val === "uncertain") ctx.fillStyle = "#ffd324";
+
+      const [x,y] = key.split(",").map(Number);
+      ctx.fillRect((x - minX) * GRID, (y - minY) * GRID, GRID, GRID);
+    });
+  }
+
+  /* 3️⃣ smoke_density：纯颜色渲染（不叠加底图） */
+  if (viewMode === "smoke_density") {
+    const d = smokeDensity[currentFloor] || {};
+    Object.entries(d).forEach(([key, v]) => {
+      const [x,y] = key.split(",").map(Number);
+      
+      // 使用我们新定义的 蓝-绿-红 颜色函数
+      ctx.fillStyle = smokeColor(v);
+      
+      ctx.fillRect(
+        (x - minX) * GRID,
+        (y - minY) * GRID,
+        GRID, GRID
+      );
+    });
+  }
+
+  drawGrid();
+}
 
   /* 2️⃣ block_status：完全不看 points */
   if (viewMode === "block_status") {
@@ -308,7 +354,7 @@ function draw() {
   }
 
   drawGrid();
-}
+
 
 /* ================= Tooltip ================= */
 
