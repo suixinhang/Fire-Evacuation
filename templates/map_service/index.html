@@ -37,7 +37,6 @@
 <div class="container is-fluid">
 <div class="columns">
 
-<!-- 左侧画布 -->
 <div class="column is-9">
 
   <div class="level mb-3">
@@ -58,10 +57,11 @@
     </div>
   </div>
 
-  <canvas id="canvas"></canvas>
+  <div style="overflow:auto; max-height:80vh;">
+    <canvas id="canvas"></canvas>
+  </div>
 </div>
 
-<!-- 右侧图例 -->
 <div class="column is-3">
   <div class="legend-box">
     <p class="has-text-weight-semibold mb-2">Legend</p>
@@ -73,7 +73,6 @@
 </div>
 </section>
 
-<!-- Tooltip -->
 <div id="tooltip"
      style="
        position: fixed;
@@ -92,6 +91,7 @@
 /* ================= 基础配置 ================= */
 
 const GRID = 25;
+const GRID_COUNT = 200;
 
 const POINT_TYPES = [
   { type: "wall", name: "Wall", color: "#333" },
@@ -113,6 +113,9 @@ const tooltip = document.getElementById("tooltip");
 const legend = document.getElementById("legend");
 const floorSelect = document.getElementById("floorSelect");
 
+canvas.width  = GRID_COUNT * GRID;
+canvas.height = GRID_COUNT * GRID;
+
 /* ================= 状态 ================= */
 
 let mapData = [];
@@ -121,25 +124,23 @@ let smokeDensity = {};
 
 let currentFloor = null;
 let viewMode = "block_type";
+
 let minX = 0, minY = 0;
-let maxX = 0, maxY = 0;
 
 /* ================= 工具 ================= */
 
 function smokeColor(v) {
-    if (v === -1) return "#000000"; // 墙壁显示深灰色
-    
+    if (v === -1) return "#000000";
+
     const value = Math.max(0, Math.min(100, v));
     let r, g, b;
 
     if (value <= 50) {
-        // 0-50: 从 蓝色(0,0,255) 向 绿色(0,255,0) 过渡
         const ratio = value / 50;
         r = 0;
         g = Math.round(255 * ratio);
         b = Math.round(255 * (1 - ratio));
     } else {
-        // 50-100: 从 绿色(0,255,0) 向 红色(255,0,0) 过渡
         const ratio = (value - 50) / 50;
         r = Math.round(255 * ratio);
         g = Math.round(255 * (1 - ratio));
@@ -151,16 +152,20 @@ function smokeColor(v) {
 
 function drawGrid() {
   ctx.strokeStyle = "#e6e6e6";
-  for (let x = 0; x <= canvas.width; x += GRID) {
+
+  for (let x = 0; x <= GRID_COUNT; x++) {
+    let px = x * GRID;
     ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, canvas.height);
+    ctx.moveTo(px, 0);
+    ctx.lineTo(px, canvas.height);
     ctx.stroke();
   }
-  for (let y = 0; y <= canvas.height; y += GRID) {
+
+  for (let y = 0; y <= GRID_COUNT; y++) {
+    let py = y * GRID;
     ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(canvas.width, y);
+    ctx.moveTo(0, py);
+    ctx.lineTo(canvas.width, py);
     ctx.stroke();
   }
 }
@@ -181,7 +186,7 @@ function updateLegend() {
       ["#23d160", "watched"],
       ["#fa6500", "unwatched"],
       ["#ffd324", "uncertain"],
-      ["transparent", "null (no overlay)"]
+      ["transparent", "null"]
     ];
   }
 
@@ -197,9 +202,11 @@ function updateLegend() {
   items.forEach(([color, text]) => {
     const row = document.createElement("div");
     row.className = "legend-item";
+
     const box = document.createElement("div");
     box.className = "legend-color";
     box.style.background = color;
+
     row.appendChild(box);
     row.appendChild(document.createTextNode(text));
     legend.appendChild(row);
@@ -234,127 +241,46 @@ function updateFloorSelect() {
 
 /* ================= 绘制 ================= */
 
-function computeBounds() {
-  let xs = [], ys = [];
-
-  const floor = mapData.find(f => f.name === currentFloor);
-  if (floor) {
-    floor.points.forEach(p => {
-      xs.push(p.x);
-      ys.push(p.y);
-    });
-  }
-
-  const s = blockStatus[currentFloor] || {};
-  Object.keys(s).forEach(k => {
-    const [x,y] = k.split(",").map(Number);
-    xs.push(x); ys.push(y);
-  });
-
-  const d = smokeDensity[currentFloor] || {};
-  Object.keys(d).forEach(k => {
-    const [x,y] = k.split(",").map(Number);
-    xs.push(x); ys.push(y);
-  });
-
-  if (!xs.length) return false;
-
-  minX = Math.min(...xs);
-  minY = Math.min(...ys);
-  maxX = Math.max(...xs);
-  maxY = Math.max(...ys);
-
-  canvas.width  = (maxX - minX + 1) * GRID;
-  canvas.height = (maxY - minY + 1) * GRID;
-
-  return true;
-}
-
 function draw() {
   if (!currentFloor) return;
-  if (!computeBounds()) return;
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  /* 1️⃣ block_type：只画建筑点位 */
   if (viewMode === "block_type") {
     const floor = mapData.find(f => f.name === currentFloor);
     if (floor) {
       floor.points.forEach(p => {
         ctx.fillStyle = TYPE_MAP[p.type]?.color || "#999";
-        ctx.fillRect((p.x - minX) * GRID, (p.y - minY) * GRID, GRID, GRID);
+        ctx.fillRect(p.x * GRID, p.y * GRID, GRID, GRID);
       });
     }
   }
 
-  /* 2️⃣ block_status：显示监控状态 */
   if (viewMode === "block_status") {
     const s = blockStatus[currentFloor] || {};
     Object.entries(s).forEach(([key, val]) => {
       if (val === "null") return;
+
       if (val === "watched")   ctx.fillStyle = "#23d160";
       if (val === "unwatched") ctx.fillStyle = "#fa6500";
       if (val === "uncertain") ctx.fillStyle = "#ffd324";
 
       const [x,y] = key.split(",").map(Number);
-      ctx.fillRect((x - minX) * GRID, (y - minY) * GRID, GRID, GRID);
+      ctx.fillRect(x * GRID, y * GRID, GRID, GRID);
     });
   }
 
-  /* 3️⃣ smoke_density：纯颜色渲染（不叠加底图） */
   if (viewMode === "smoke_density") {
     const d = smokeDensity[currentFloor] || {};
     Object.entries(d).forEach(([key, v]) => {
       const [x,y] = key.split(",").map(Number);
-      
-      // 使用我们新定义的 蓝-绿-红 颜色函数
       ctx.fillStyle = smokeColor(v);
-      
-      ctx.fillRect(
-        (x - minX) * GRID,
-        (y - minY) * GRID,
-        GRID, GRID
-      );
+      ctx.fillRect(x * GRID, y * GRID, GRID, GRID);
     });
   }
 
   drawGrid();
 }
-
-  /* 2️⃣ block_status：完全不看 points */
-  if (viewMode === "block_status") {
-    const s = blockStatus[currentFloor] || {};
-    Object.entries(s).forEach(([key, val]) => {
-      if (val === "null") return;
-      if (val === "watched")   ctx.fillStyle = "#23d160";
-      if (val === "unwatched") ctx.fillStyle = "#fa6500";
-      if (val === "uncertain") ctx.fillStyle = "#ffd324";
-
-      const [x,y] = key.split(",").map(Number);
-      ctx.fillRect(
-        (x - minX) * GRID,
-        (y - minY) * GRID,
-        GRID, GRID
-      );
-    });
-  }
-
-  /* 3️⃣ smoke_density：完全不看 points */
-  if (viewMode === "smoke_density") {
-    const d = smokeDensity[currentFloor] || {};
-    Object.entries(d).forEach(([key, v]) => {
-      const [x,y] = key.split(",").map(Number);
-      ctx.fillStyle = smokeColor(v);
-      ctx.fillRect(
-        (x - minX) * GRID,
-        (y - minY) * GRID,
-        GRID, GRID
-      );
-    });
-  }
-
-  drawGrid();
-
 
 /* ================= Tooltip ================= */
 
@@ -363,8 +289,8 @@ canvas.addEventListener("mousemove", e => {
   const cx = e.clientX - rect.left;
   const cy = e.clientY - rect.top;
 
-  const x = Math.floor(cx / GRID) + minX;
-  const y = Math.floor(cy / GRID) + minY;
+  const x = Math.floor(cx / GRID);
+  const y = Math.floor(cy / GRID);
   const key = `${x},${y}`;
 
   let text = `(${x}, ${y})`;
@@ -373,7 +299,7 @@ canvas.addEventListener("mousemove", e => {
     const floor = mapData.find(f => f.name === currentFloor);
     const point = floor?.points.find(p => p.x === x && p.y === y);
     if (!point) return tooltip.style.display = "none";
-    text += `<br>Type: ${TYPE_MAP[point.type]?.name || point.type}`;
+    text += `<br>Type: ${TYPE_MAP[point.type]?.name}`;
   }
 
   if (viewMode === "block_status") {
