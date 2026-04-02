@@ -144,26 +144,31 @@ function probColor(v) {
     return `rgb(${r},${g},${b})`;
 }
 
-function smokeColor(v) {
-    if (v === -1) return "#000000";
+function smokeColorNormalized(ratio, v) {
+    if (v === -1) return "#000000"; 
+    
+    if (ratio <= 0) return "#ffffff"; 
 
-    const value = Math.max(0, Math.min(100, v));
     let r, g, b;
 
-    if (value <= 50) {
-        const ratio = value / 50;
-        r = 0;
-        g = Math.round(255 * ratio);
-        b = Math.round(255 * (1 - ratio));
+    if (ratio < 0.5) {
+
+        const localRatio = ratio / 0.5;
+        r = 255;
+        g = 255;
+        b = Math.round(255 * (1 - localRatio));
     } else {
-        const ratio = (value - 50) / 50;
-        r = Math.round(255 * ratio);
-        g = Math.round(255 * (1 - ratio));
+  
+
+        const localRatio = (ratio - 0.5) / 0.5;
+        r = 255;
+        g = Math.round(255 * (1 - localRatio));
         b = 0;
     }
 
     return `rgb(${r},${g},${b})`;
 }
+
 
 function drawGrid() {
   ctx.strokeStyle = "#e6e6e6";
@@ -216,10 +221,10 @@ function updateLegend() {
 
   if (viewMode === "smoke_density") {
     items = [
-      ["#000000", "-1"],
-      [smokeColor(0), "0"],
-      [smokeColor(50), "50"],
-      [smokeColor(100), "100"]
+      ["#000000", "Wall"],
+      [smokeColorNormalized(0), "Clear (0%)"],
+      [smokeColorNormalized(0.5), "Medium (50%)"],
+      [smokeColorNormalized(1.0), "Danger (Max)"]
     ];
   }
 
@@ -305,13 +310,26 @@ function draw() {
 
   if (viewMode === "smoke_density") {
     const d = smokeDensity[currentFloor] || {};
-    Object.entries(d).forEach(([key, v]) => {
-      const [x,y] = key.split(",").map(Number);
-      ctx.fillStyle = smokeColor(v);
+    const entries = Object.entries(d);
+    
+    let maxVal = 0;
+    for (let [, v] of entries) {
+        if (v > maxVal) maxVal = v;
+    }
+
+    entries.forEach(([key, v]) => {
+      const [x, y] = key.split(",").map(Number);
+      
+      // 只有非墙壁且有浓度时才计算比例
+      let ratio = 0;
+      if (v > 0 && maxVal > 0) {
+          ratio = v / maxVal;
+      }
+
+      ctx.fillStyle = smokeColorNormalized(ratio, v);
       ctx.fillRect(x * GRID, y * GRID, GRID, GRID);
     });
   }
-
   drawGrid();
 }
 

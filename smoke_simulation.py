@@ -1,7 +1,7 @@
 import numpy as np
 
 class SmokeSimulation:
-    def __init__(self, size_x, size_y, dt=0.2, diffusion=0.001, viscosity=0.0001):
+    def __init__(self, size_x, size_y, dt=0.2, diffusion=0.1, viscosity=0.0001):
         self.size_x = size_x
         self.size_y = size_y
         self.dt = dt
@@ -22,9 +22,6 @@ class SmokeSimulation:
         return field
 
     def diffuse(self, field, diff_rate, iterations=20):
-        """
-        物理扩散步骤：使用 Gauss-Seidel / Jacobi 迭代求解隐式扩散方程
-        """
         if diff_rate <= 0:
             return field
         
@@ -114,7 +111,21 @@ class SmokeSimulation:
             influence = np.exp(-dist_sq / (2 * sigma**2))
             self.u += (dx / dist) * influence * strength * (self.dt / 0.2)
             self.v += (dy / dist) * influence * strength * (self.dt / 0.2)
-            self.smoke += influence * (15.0 * self.dt)
+            self.smoke += influence * (100.0 * self.dt)
+    
+    def apply_blur(self, field, amount=0.2):
+
+        if amount <= 0:
+            return field
+        
+        smoothed = field.copy()
+        smoothed[1:-1, 1:-1] = (1 - amount) * field[1:-1, 1:-1] + (amount / 4.0) * (
+            field[1:-1, :-2] + field[1:-1, 2:] +
+            field[:-2, 1:-1] + field[2:, 1:-1]
+        )
+        
+        smoothed[self.wall == 1] = 0
+        return self.add_boundary_conditions(smoothed)
 
     def step(self, fire_origins, dt=None):
         if dt is not None:
@@ -141,6 +152,7 @@ class SmokeSimulation:
         self.v = self.advect(v_pure, u_pure, v_pure)
         self.smoke = self.advect(self.smoke, u_pure, v_pure)
 
-        decay_factor = 1 ** (self.dt / 0.2)
+        decay_factor = 0.997 ** (self.dt / 0.2)
         self.smoke *= decay_factor
+        self.smoke = self.apply_blur(self.smoke, amount=0.4)
         self.smoke[self.wall == 1] = 0
