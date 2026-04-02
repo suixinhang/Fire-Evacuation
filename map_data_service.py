@@ -27,6 +27,7 @@ class MapDataService:
 
         self.block_status = {}
         self.smoke_density = {}
+        self.probability_map = {}   # 可能地图除了watch/unwatch, 墙壁/空间 和烟雾浓度之外，还需要在增加一个视图，每个格子赋予一个不同数字，最后加起来等于1即可（概率pdf），并给出一个可以修改每个格子的概率的方法，修改完毕之后再整体归一化
         self.global_time = 0.0 
         
         self.simulators = {}    # 存放每层的仿真实例
@@ -91,6 +92,76 @@ class MapDataService:
                         self.smoke_density[fname][key] = 0
             
             self.simulators[fname] = sim
+
+            # 初始化概率分布
+            self.probability_map[fname] = {}
+
+            valid_cells = [
+                key for key, status in self.block_status[fname].items()
+                if status != "null"
+            ]
+
+            if valid_cells:
+                init_prob = 1.0 / len(valid_cells)
+                for key in valid_cells:
+                    self.probability_map[fname][key] = init_prob
+
+    def set_cell_probability(self, floor_name, key, value):
+        """
+        修改单个格子的概率值，并自动归一化
+        """
+        if floor_name not in self.probability_map:
+            return False
+
+        if key not in self.probability_map[floor_name]:
+            return False
+
+        if value < 0:
+            return False
+
+        self.probability_map[floor_name][key] = float(value)
+
+        # 每次自动进行归一化
+        self.normalize_probability(floor_name)
+        return True
+    
+    def set_multiple_probabilities(self, floor_name, updates: dict):
+        """
+        批量修改概率
+        updates = {"x,y": value, ...}
+        """
+        if floor_name not in self.probability_map:
+            return False
+
+        for key, value in updates.items():
+            if key in self.probability_map[floor_name] and value >= 0:
+                self.probability_map[floor_name][key] = float(value)
+
+        self.normalize_probability(floor_name)
+        return True
+    
+    def normalize_probability(self, floor_name):
+        """
+        将某一层的概率归一化，使总和为1
+        """
+        probs = self.probability_map.get(floor_name)
+        if not probs:
+            return
+
+        total = sum(probs.values())
+
+        if total <= 0:
+            # 防止全0，重新均匀分布
+            n = len(probs)
+            if n == 0:
+                return
+            uniform = 1.0 / n
+            for k in probs:
+                probs[k] = uniform
+            return
+
+        for k in probs:
+            probs[k] /= total
     
     def update_simulation(self, dt, speed_multiplier=1.0):
         """推进全局时间与模拟器"""
@@ -140,6 +211,10 @@ class MapDataService:
         @app.route("/api/smoke_density")
         def api_smoke_density():
             return jsonify(self.smoke_density)
+        
+        @app.route("/api/probability_map")
+        def api_probability_map():
+            return jsonify(self.probability_map)
 
         logger.info(f"Map Runtime Server http://{HTTP_ADDR}:{HTTP_PORT}")
         app.run(HTTP_ADDR, HTTP_PORT)
