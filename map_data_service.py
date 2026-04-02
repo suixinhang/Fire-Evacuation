@@ -1,6 +1,8 @@
 import os
 import sys
+import time
 import random
+import pathlib
 import threading
 
 from flask import Flask, render_template, request, jsonify
@@ -32,6 +34,13 @@ class MapDataService:
         
         self.simulators = {}    # 存放每层的仿真实例
         self.fire_origins = {}  # 存放每层的火源坐标
+
+        if not os.getenv('FIRE_EVACUATION_USE_RECORD_ID'):
+            # 定义全局地图数据动态切片变化数据文件夹名字
+            self.record_name = str(int(time.time()))
+            self.record_path = pathlib.Path(__file__).parent / "record" / (self.record_name + ".txt")
+            self.record_fp = open(self.record_path, "w+")
+            logger.info(f"Record start, file name is {self.record_name}.txt")
 
         t = threading.Thread(target=self.web_server, daemon=True)
         t.start()
@@ -105,6 +114,48 @@ class MapDataService:
                 init_prob = 1.0 / len(valid_cells)
                 for key in valid_cells:
                     self.probability_map[fname][key] = init_prob
+
+    def take_record(self):
+        """
+        流式追加日志（四行结构，无内存缓存）
+        """
+
+        import os
+
+        if not hasattr(self, "_record_counter"):
+            self._record_counter = 0
+
+        try:
+            # ===== 构造 DATA 行 =====
+            lines = []
+
+            for fname in self.block_status:
+                parts = []
+                for key in self.block_status[fname]:
+                    status = self.block_status[fname].get(key, "")
+                    smoke = self.smoke_density[fname].get(key, 0)
+                    prob = self.probability_map[fname].get(key, 0)
+
+                    parts.append(f"{key}:{status}:{smoke:.2f}:{prob:.6f}")
+
+                line = f"{fname}|{' ; '.join(parts)}"
+                lines.append(line)
+
+            data_line = "||".join(lines)
+
+            # ===== 写入文件（追加）=====
+            self.record_fp.write(f"STEP:{self._record_counter}\n")
+            self.record_fp.write(f"TIME:{self.global_time:.3f}\n")
+            self.record_fp.write(f"DATA:{data_line}\n")
+            self.record_fp.write("----\n")
+
+            self.record_fp.flush()
+            os.fsync(self.record_fp.fileno())  # 强制落盘
+
+            self._record_counter += 1
+
+        except Exception as e:
+            logger.error(f"Record write failed: {e}")
 
     def set_cell_probability(self, floor_name, key, value):
         """
