@@ -28,21 +28,10 @@ def index():
 
 @app.route('/create_map/', methods=["GET", "POST"])
 def create_map_view():
-    if request.method == "POST":
-        map_json = request.get_json()
-        if not map_json:
-            return jsonify({"error": "No JSON data received"}), 400
         
-        title = map_json.get("title", "Untitled Map")
-        floors = map_json.get("floors", [])
-        if not isinstance(floors, list):
-            return jsonify({"error": "floors must be a list"}), 400
-        
-        map.create_map(title, floors)
+    map.create_map("New Untitled Map", [])
 
-        return jsonify({"success": True, "redirect": "/"})
-    
-    return render_template('draw/create_map.html')
+    return redirect('/')
 
 @app.route('/del_map/', methods = ["GET"])
 def del_map():

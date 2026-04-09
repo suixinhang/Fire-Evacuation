@@ -101,7 +101,9 @@ const POINT_TYPES = [
   { type: "stair", name: "Stair", color: "#23d160" },
   { type: "startpoint", name: "Start Point", color: "#ffd700" },
   { type: "window", name: "Window", color: "#90dcfe" },
-  { type: "fire_origin", name: "Fire_origin", color : "#ffb6c1"}
+  { type: "fire_origin", name: "Fire_origin", color : "#ffb6c1"},
+  { type: "entrance", name: "Entrance", color : "#3273dc"},
+  { type: "door", name: "Door", color : "#f642c1"}
 ];
 
 const TYPE_MAP = {};
@@ -286,10 +288,43 @@ function draw() {
 
   if (viewMode === "block_type") {
     const floor = mapData.find(f => f.name === currentFloor);
+
     if (floor) {
       floor.points.forEach(p => {
+
+        // ===== 画块 =====
         ctx.fillStyle = TYPE_MAP[p.type]?.color || "#999";
         ctx.fillRect(p.x * GRID, p.y * GRID, GRID, GRID);
+
+        // ===== 画 weight（核心新增）=====
+        if (p.weight !== undefined && p.weight !== null && p.weight !== 0) {
+
+          // 自动判断字体颜色（防止看不清）
+          const bg = TYPE_MAP[p.type]?.color || "#ffffff";
+
+          function getBrightness(hex){
+            const c = hex.substring(1);
+            const rgb = parseInt(c,16);
+            const r = (rgb>>16)&255;
+            const g = (rgb>>8)&255;
+            const b = rgb&255;
+            return (r*299 + g*587 + b*114)/1000;
+          }
+
+          const isDark = getBrightness(bg) < 128;
+
+          ctx.fillStyle = isDark ? "#fff" : "#000";
+          ctx.font = "10px sans-serif";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+
+          ctx.fillText(
+            p.weight,
+            p.x * GRID + GRID / 2,
+            p.y * GRID + GRID / 2
+          );
+        }
+
       });
     }
   }
