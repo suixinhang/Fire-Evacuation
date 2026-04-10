@@ -26,7 +26,8 @@ class SmokeSimulation:
             return field
         
         # 这里的 a 对应于扩散强度因子
-        a = self.dt * diff_rate * (self.size_x - 2) * (self.size_y - 2)
+        self.dx = 0.5
+        a = self.dt * diff_rate * (self.dx)**2
         new_field = field.copy()
         
         for _ in range(iterations):
@@ -111,7 +112,7 @@ class SmokeSimulation:
             influence = np.exp(-dist_sq / (2 * sigma**2))
             self.u += (dx / dist) * influence * strength * (self.dt / 0.2)
             self.v += (dy / dist) * influence * strength * (self.dt / 0.2)
-            self.smoke += influence * (100.0 * self.dt)
+            self.smoke += influence * (0.015 * self.dt)
     
     def apply_blur(self, field, amount=0.2):
 
