@@ -1,9 +1,12 @@
 import os
 import sys
 import time
+import math
+import heapq
 import random
 import pathlib
 import threading
+from collections import deque
 
 from flask import Flask, render_template, request, jsonify
 from map import Map
@@ -29,7 +32,9 @@ class MapDataService:
 
         self.block_status = {}
         self.smoke_density = {}
+        self.cell_weight = {}
         self.probability_map = {}   # 可能地图除了watch/unwatch, 墙壁/空间 和烟雾浓度之外，还需要在增加一个视图，每个格子赋予一个不同数字，最后加起来等于1即可（概率pdf），并给出一个可以修改每个格子的概率的方法，修改完毕之后再整体归一化
+        self.entrances = {}   # 每层入口
         self.global_time = 0.0 
         
         self.simulators = {}    # 存放每层的仿真实例
@@ -60,6 +65,8 @@ class MapDataService:
             self.block_status[fname] = {}
             self.smoke_density[fname] = {}
             self.fire_origins[fname] = []
+            self.entrances[fname] = []
+            self.cell_weight[fname] = {}
 
             if not points:
                 continue
@@ -81,6 +88,7 @@ class MapDataService:
             for y in range(min_y, max_y + 1):
                 for x in range(min_x, max_x + 1):
                     key = f"{x},{y}"
+                    self.cell_weight[fname][key] = 0
 
                     if (x, y) in point_map:
                         p = point_map[(x, y)]
@@ -114,6 +122,110 @@ class MapDataService:
                 init_prob = 1.0 / len(valid_cells)
                 for key in valid_cells:
                     self.probability_map[fname][key] = init_prob
+
+            for p in points:
+                x, y = p["x"], p["y"]
+                key = f"{x},{y}"
+
+                t = p.get("type")
+                w = p.get("weight", 0)
+
+                self.cell_weight[fname][key] = w
+
+                if t == "wall":
+                    self.block_status[fname][key] = "null"
+                    self.smoke_density[fname][key] = -1
+                    sim.wall[y, x] = 1
+
+                elif t == "fire_origin":
+                    self.block_status[fname][key] = "fire"
+                    self.smoke_density[fname][key] = 100
+                    self.fire_origins[fname].append((x, y))
+
+                elif t in ("entrance", "door"):
+                    self.block_status[fname][key] = "entrance"
+                    self.smoke_density[fname][key] = 0
+                    self.entrances[fname].append((x, y))
+
+                else:
+                    self.block_status[fname][key] = "walkable"
+                    self.smoke_density[fname][key] = 0
+        
+        for fname in self.simulators:
+            self.update_probability_by_astar(fname)
+
+    def astar_distance(self, floor_name, start, entrances):
+        """
+        从 start 到最近 entrance 的最短路径（四方向，每步=1）
+        """
+
+        def heuristic(x, y):
+            return min(abs(x - ex) + abs(y - ey) for ex, ey in entrances)
+
+        open_heap = []
+        heapq.heappush(open_heap, (heuristic(*start), 0, start))  
+        # (f, g, (x,y))
+
+        visited = set()
+
+        while open_heap:
+            f, g, (x, y) = heapq.heappop(open_heap)
+
+            if (x, y) in visited:
+                continue
+            visited.add((x, y))
+
+            if (x, y) in entrances:
+                return g
+
+            for dx, dy in [(1,0), (-1,0), (0,1), (0,-1)]:
+                nx, ny = x + dx, y + dy
+                key = f"{nx},{ny}"
+
+                if key not in self.block_status[floor_name]:
+                    continue
+
+                if self.block_status[floor_name][key] == "null":
+                    continue
+
+                if (nx, ny) in visited:
+                    continue
+
+                new_g = g + 1
+                new_f = new_g + heuristic(nx, ny)
+
+                heapq.heappush(open_heap, (new_f, new_g, (nx, ny)))
+
+        return None
+
+    def update_probability_by_astar(self, floor_name, weight=1.0):
+        entrances = self.entrances.get(floor_name, [])
+        if not entrances:
+            return
+
+        probs = self.probability_map[floor_name]
+
+        max_d = 0
+        dist_map = {}
+
+        for key in probs:
+            x, y = map(int, key.split(","))
+
+            d = self.astar_distance(floor_name, (x, y), entrances)
+
+            if d is None:
+                d = 0
+
+            dist_map[key] = d
+            max_d = max(max_d, d)
+
+        for key in probs:
+            d = dist_map[key]
+            w = self.cell_weight[floor_name].get(key, 0)
+
+            probs[key] = d * w
+
+        self.normalize_probability(floor_name)
 
     def take_record(self):
         """
@@ -235,6 +347,9 @@ class MapDataService:
                 # 同步浓度并限制在 0-100 区间
                 density_val = float(sim.smoke[y, x])
                 self.smoke_density[fname][key] = min(100.0, max(0.0, density_val))
+            
+        for fname in self.simulators:
+            self.update_probability_by_astar(fname)
                 
     def web_server(self):
         HTTP_ADDR = os.getenv('FIRE_EVACUATION_HTTP_ADDR', '0.0.0.0')
