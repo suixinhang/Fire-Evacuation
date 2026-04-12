@@ -233,7 +233,8 @@ class MapDataService:
         流式追加日志（四行结构，无内存缓存）
         """
 
-        import os
+        if os.getenv('FIRE_EVACUATION_NO_RECORD') == "1":
+            return
 
         if not hasattr(self, "_record_counter"):
             self._record_counter = 0
@@ -460,6 +461,59 @@ class MapDataService:
                     responders.append((key, (x, y)))
 
         return responders
+
+    def spawn_occupants_by_probability(self, n_per_floor: int):
+        """
+        根据 probability_map，在每一层随机生成 n 个 occupant，
+        并直接写入 map_obj 的数据中（points）
+        """
+
+        floors = self.map_obj.get_data() or []
+
+        for floor in floors:
+            fname = floor.get("name")
+            points = floor.get("points", [])
+
+            probs = self.probability_map.get(fname)
+            if not probs:
+                continue
+
+            # ===== 过滤可放置位置 =====
+            valid_keys = [
+                k for k in probs
+                if self.block_status[fname].get(k) != "null"
+            ]
+
+            if not valid_keys:
+                continue
+
+            weights = [probs[k] for k in valid_keys]
+
+            # ===== 随机采样 =====
+            chosen = random.choices(
+                valid_keys,
+                weights=weights,
+                k=n_per_floor
+            )
+
+            # ===== 去重（避免重叠）=====
+            chosen = list(set(chosen))
+
+            # ===== 当前已有点（避免覆盖 responder 等）=====
+            existing = {(p["x"], p["y"]) for p in points}
+
+            for key in chosen:
+                x, y = map(int, key.split(","))
+
+                if (x, y) in existing:
+                    continue
+
+                # 🚀 核心：直接写入地图
+                points.append({
+                    "x": x,
+                    "y": y,
+                    "type": "occupant"
+                })
 
     def web_server(self):
         HTTP_ADDR = os.getenv('FIRE_EVACUATION_HTTP_ADDR', '0.0.0.0')

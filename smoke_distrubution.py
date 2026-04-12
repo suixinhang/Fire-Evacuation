@@ -8,10 +8,12 @@ dt = 0.2  # 模拟系统基础步长
 
 print(f"Starting smoke distribution simulation. Speed Multiplier: {speed}x")
 
+MapDataServiceObj.spawn_occupants_by_probability(n_per_floor=10)
+
 while True:
     # 按照倍速推进全局时间和烟雾模拟
     MapDataServiceObj.update_simulation(dt, speed_multiplier=speed)
     
     # 强制真实等待 dt 秒，让推演按照真实时钟运行
     time.sleep(dt)
-    # MapDataServiceObj.take_record()
+    MapDataServiceObj.take_record()
