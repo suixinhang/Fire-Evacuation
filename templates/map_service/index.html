@@ -127,6 +127,9 @@ let blockStatus = {};
 let smokeDensity = {};
 let probabilityMap = {};
 
+let visibilityMap = {};
+let hoverVisibleCells = [];   // 当前鼠标格子的可见范围
+
 let currentFloor = null;
 let viewMode = "block_type";
 
@@ -173,6 +176,25 @@ function smokeColorNormalized(ratio, v) {
 
 
 function drawGrid() {
+  // ===== 可见范围高亮（修正版）=====
+  if (viewMode === "block_type" && hoverVisibleCells.length > 0) {
+    ctx.fillStyle = "rgba(50, 115, 220, 0.25)";
+
+    hoverVisibleCells.forEach(cell => {
+      if (typeof cell !== "string") return;
+
+      const parts = cell.split(",");
+      if (parts.length !== 2) return;
+
+      const vx = Number(parts[0]);
+      const vy = Number(parts[1]);
+
+      if (isNaN(vx) || isNaN(vy)) return;
+
+      ctx.fillRect(vx * GRID, vy * GRID, GRID, GRID);
+    });
+  }
+
   ctx.strokeStyle = "#e6e6e6";
 
   for (let x = 0; x <= GRID_COUNT; x++) {
@@ -292,14 +314,16 @@ function draw() {
     if (floor) {
       floor.points.forEach(p => {
 
+        // ❗ 核心：type 为空直接跳过
+        if (!p.type) return;
+
         // ===== 画块 =====
         ctx.fillStyle = TYPE_MAP[p.type]?.color || "#999";
         ctx.fillRect(p.x * GRID, p.y * GRID, GRID, GRID);
 
-        // ===== 画 weight（核心新增）=====
+        // ===== 画 weight =====
         if (p.weight !== undefined && p.weight !== null && p.weight !== 0) {
 
-          // 自动判断字体颜色（防止看不清）
           const bg = TYPE_MAP[p.type]?.color || "#ffffff";
 
           function getBrightness(hex){
@@ -391,7 +415,10 @@ canvas.addEventListener("mousemove", e => {
   if (viewMode === "block_type") {
     const floor = mapData.find(f => f.name === currentFloor);
     const point = floor?.points.find(p => p.x === x && p.y === y);
-    if (!point) return tooltip.style.display = "none";
+    if (!point || !point.type) {
+      tooltip.style.display = "none";
+      return;
+    }
     text += `<br>Type: ${TYPE_MAP[point.type]?.name}`;
   }
 
@@ -407,10 +434,36 @@ canvas.addEventListener("mousemove", e => {
   tooltip.style.left = e.clientX + 12 + "px";
   tooltip.style.top = e.clientY + 12 + "px";
   tooltip.style.display = "block";
+
+  if (viewMode === "block_type") {
+    const floor = mapData.find(f => f.name === currentFloor);
+    const point = floor?.points.find(p => p.x === x && p.y === y);
+
+    if (!point || !point.type) {
+      tooltip.style.display = "none";
+      hoverVisibleCells = [];
+      draw();
+      return;
+    }
+
+    text += `<br>Type: ${TYPE_MAP[point.type]?.name}`;
+
+    // ⭐ 新增：如果是 responder，就取可见范围
+    if (point.type === "responder") {
+      const vis = visibilityMap[currentFloor]?.[key];
+      hoverVisibleCells = vis || [];
+    } else {
+      hoverVisibleCells = [];
+    }
+
+    draw(); // ⭐ 触发重绘
+  }
 });
 
 canvas.addEventListener("mouseleave", () => {
   tooltip.style.display = "none";
+  hoverVisibleCells = [];
+  draw();
 });
 
 /* ================= 数据 ================= */
@@ -436,6 +489,9 @@ function fetchAll() {
   fetch("/api/probability_map").then(r => r.json()).then(d => {
     probabilityMap = d;
     draw();
+  });
+  fetch("/api/responder_visibility").then(r => r.json()).then(d => {
+    visibilityMap = d;
   });
 }
 
