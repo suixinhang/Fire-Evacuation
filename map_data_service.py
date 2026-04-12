@@ -372,7 +372,7 @@ class MapDataService:
                 (x, y),
                 num_rays=72,
                 max_range=50,
-                smoke_threshold=0.9
+                smoke_threshold=0.3
             )
 
             result[rid] = visible
@@ -434,7 +434,7 @@ class MapDataService:
                 break
 
             smoke = self.smoke_density[floor_name].get(key, 0)
-            smoke_norm = smoke / 100.0
+            smoke_norm = smoke
 
             accumulated_smoke += smoke_norm
             visible_cells.append(key)
