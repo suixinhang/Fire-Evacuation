@@ -54,6 +54,7 @@
 <script>
 /* ================== CONSTANTS ================== */
 const POINT_TYPES = [
+  { type: "", name: "Blank", color: "#ffffff" },
   { type: "wall", name: "Wall", color: "#333" },
   { type: "responder", name: "Responder", color: "#3273dc" },
   { type: "occupant", name: "Occupant", color: "#fa6500" },
@@ -69,6 +70,10 @@ const GRID_COUNT = 50;
 
 const mapData = { title:"Untitled Map", floors:[], id:"" };
 let currentFloor = null;
+
+let isSelecting = false;
+let selectStart = null;
+let selectEnd = null;
 
 /* ================== GRID ================== */
 const canvas=document.getElementById("grid");
@@ -162,6 +167,48 @@ function drawGrid(){
       );
     }
   });
+
+  if(selectStart && selectEnd){
+  const minX = Math.min(selectStart.x, selectEnd.x);
+  const maxX = Math.max(selectStart.x, selectEnd.x);
+  const minY = Math.min(selectStart.y, selectEnd.y);
+  const maxY = Math.max(selectStart.y, selectEnd.y);
+
+  ctx.fillStyle = "rgba(50,115,220,0.2)";
+  ctx.fillRect(
+    minX*size,
+    minY*size,
+    (maxX-minX+1)*size,
+    (maxY-minY+1)*size
+  );
+
+  ctx.strokeStyle = "#3273dc";
+  ctx.strokeRect(
+    minX*size,
+    minY*size,
+    (maxX-minX+1)*size,
+    (maxY-minY+1)*size
+  );
+}
+}
+
+function getSelectedCells(){
+  if(!selectStart || !selectEnd) return [];
+
+  const cells = [];
+
+  const minX = Math.min(selectStart.x, selectEnd.x);
+  const maxX = Math.max(selectStart.x, selectEnd.x);
+  const minY = Math.min(selectStart.y, selectEnd.y);
+  const maxY = Math.max(selectStart.y, selectEnd.y);
+
+  for(let x=minX; x<=maxX; x++){
+    for(let y=minY; y<=maxY; y++){
+      cells.push({x,y});
+    }
+  }
+
+  return cells;
 }
 
 /* ================== FLOORS ================== */
@@ -210,24 +257,33 @@ function openFloorModal(){
 }
 
 /* ================== PAINT ================== */
-let isPainting=false;
+canvas.addEventListener("mousedown", e=>{
+  if(e.button !== 0 || !currentFloor) return;
 
-canvas.addEventListener("mousedown",e=>{
-  if(e.button!==0||!currentFloor) return;
-  isPainting=true;
+  isSelecting = true;
+
+  selectStart = {
+    x: Math.floor(e.offsetX / size),
+    y: Math.floor(e.offsetY / size)
+  };
+
+  selectEnd = {...selectStart};
 });
 
-canvas.addEventListener("mousemove",e=>{
-  if(!isPainting) return;
+canvas.addEventListener("mousemove", e=>{
+  if(!isSelecting) return;
 
-  const x=Math.floor(e.offsetX/size);
-  const y=Math.floor(e.offsetY/size);
+  selectEnd = {
+    x: Math.floor(e.offsetX / size),
+    y: Math.floor(e.offsetY / size)
+  };
 
-  setCell(x,y,{type:"wall",color:"#333",weight:0});
   drawGrid();
 });
 
-canvas.addEventListener("mouseup",()=>isPainting=false);
+canvas.addEventListener("mouseup", ()=>{
+  isSelecting = false;
+});
 
 /* ================== CLICK ================== */
 canvas.addEventListener("click",e=>{
@@ -247,37 +303,35 @@ canvas.addEventListener("click",e=>{
   drawGrid();
 });
 
+document.addEventListener("keydown", e=>{
+  if(e.key === "Escape"){
+    selectStart = null;
+    selectEnd = null;
+    drawGrid();
+  }
+});
+
 /* ================== CONTEXT MENU ================== */
 const menu=document.getElementById("context-menu");
 const menuItems=document.getElementById("context-items");
 
 document.addEventListener("click",()=>menu.style.display="none");
 
-canvas.addEventListener("contextmenu",e=>{
+canvas.addEventListener("contextmenu", e=>{
   e.preventDefault();
   if(!currentFloor) return;
 
-  const x=Math.floor(e.offsetX/size);
-  const y=Math.floor(e.offsetY/size);
+  const x = Math.floor(e.offsetX / size);
+  const y = Math.floor(e.offsetY / size);
 
-  const existing=currentFloor.points.find(p=>p.x===x&&p.y===y);
+  const hasSelection = selectStart && selectEnd;
+  const cells = hasSelection ? getSelectedCells() : [{x,y}];
 
-  menuItems.innerHTML="";
+  menuItems.innerHTML = "";
 
   POINT_TYPES.forEach(t=>{
-    const a=document.createElement("a");
-    a.className="dropdown-item";
-    a.textContent=t.name;
-
-    a.onclick=()=>{
-      setCell(x,y,{
-        type:t.type,
-        color:t.color,
-        weight: existing?.weight || 0
-      });
-      menu.style.display="none";
-      drawGrid();
-    };
+    const a = document.createElement("a");
+    a.className = "dropdown-item";
 
     a.innerHTML = `
       <span style="
@@ -291,21 +345,43 @@ canvas.addEventListener("contextmenu",e=>{
       ${t.name}
     `;
 
+    a.onclick = ()=>{
+      cells.forEach(c=>{
+        const existing = currentFloor.points.find(p=>p.x===c.x && p.y===c.y);
+
+        setCell(c.x, c.y, {
+          type: t.type,
+          color: t.color,
+          weight: existing?.weight || 0
+        });
+      });
+
+      menu.style.display="none";
+      drawGrid();
+    };
+
     menuItems.appendChild(a);
   });
 
-  const weightItem=document.createElement("a");
-  weightItem.className="dropdown-item";
-  weightItem.textContent="Edit Weight";
+  // ===== 批量改权重 =====
+  const weightItem = document.createElement("a");
+  weightItem.className = "dropdown-item";
+  weightItem.textContent = "Edit Weight";
 
-  weightItem.onclick=()=>{
-    const val=prompt("Weight:", existing?.weight || 0);
-    if(val===null) return;
+  weightItem.onclick = ()=>{
+    const val = prompt("Weight:");
+    if(val === null) return;
 
-    setCell(x,y,{
-      type: existing?.type || null,
-      color: existing?.color || null,
-      weight: parseFloat(val)||0
+    const w = parseFloat(val) || 0;
+
+    cells.forEach(c=>{
+      const existing = currentFloor.points.find(p=>p.x===c.x && p.y===c.y);
+
+      setCell(c.x, c.y, {
+        type: existing?.type || null,
+        color: existing?.color || null,
+        weight: w
+      });
     });
 
     menu.style.display="none";
@@ -314,9 +390,9 @@ canvas.addEventListener("contextmenu",e=>{
 
   menuItems.appendChild(weightItem);
 
-  menu.style.left=e.pageX+"px";
-  menu.style.top=e.pageY+"px";
-  menu.style.display="block";
+  menu.style.left = e.pageX+"px";
+  menu.style.top = e.pageY+"px";
+  menu.style.display = "block";
 });
 
 /* ================== SUBMIT ================== */
