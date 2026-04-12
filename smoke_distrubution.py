@@ -14,4 +14,4 @@ while True:
     
     # 强制真实等待 dt 秒，让推演按照真实时钟运行
     time.sleep(dt)
-    MapDataServiceObj.take_record()
+    # MapDataServiceObj.take_record()

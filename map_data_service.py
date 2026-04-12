@@ -36,11 +36,12 @@ class MapDataService:
         self.probability_map = {}   # 可能地图除了watch/unwatch, 墙壁/空间 和烟雾浓度之外，还需要在增加一个视图，每个格子赋予一个不同数字，最后加起来等于1即可（概率pdf），并给出一个可以修改每个格子的概率的方法，修改完毕之后再整体归一化
         self.entrances = {}   # 每层入口
         self.global_time = 0.0 
+        self.visibility_map = {}
         
         self.simulators = {}    # 存放每层的仿真实例
         self.fire_origins = {}  # 存放每层的火源坐标
 
-        if not os.getenv('FIRE_EVACUATION_USE_RECORD_ID'):
+        if not os.getenv('FIRE_EVACUATION_USE_RECORD_ID') and os.getenv('FIRE_EVACUATION_NO_RECORD') == "0":
             # 定义全局地图数据动态切片变化数据文件夹名字
             self.record_name = str(int(time.time()))
             self.record_path = pathlib.Path(__file__).parent / "record" / (self.record_name + ".txt")
@@ -350,7 +351,116 @@ class MapDataService:
             
         for fname in self.simulators:
             self.update_probability_by_astar(fname)
-                
+    
+    def compute_visibility_for_responders(self, floor_name, responders):
+        """
+        responders: [(id, (x,y)), ...]
+        """
+        result = {}
+
+        for rid, (x, y) in responders:
+            key = f"{x},{y}"
+
+            if key not in self.block_status[floor_name]:
+                continue
+
+            if self.block_status[floor_name][key] == "null":
+                continue
+
+            visible = self._compute_visible_from_point(
+                floor_name,
+                (x, y),
+                num_rays=72,
+                max_range=50,
+                smoke_threshold=0.9
+            )
+
+            result[rid] = visible
+
+        return result
+
+    def _compute_visible_from_point(self, floor_name, start, num_rays, max_range, smoke_threshold):
+        visible = set()
+
+        for i in range(num_rays):
+            angle = 2 * math.pi * i / num_rays
+            dx = math.cos(angle)
+            dy = math.sin(angle)
+
+            cells = self._cast_single_ray(
+                floor_name,
+                start,
+                (dx, dy),
+                max_range,
+                smoke_threshold
+            )
+
+            visible.update(cells)
+
+        return list(visible)  # ✅ 统一用 "x,y"
+
+    def _cast_single_ray(self, floor_name, start, direction, max_range, smoke_threshold):
+        x0, y0 = start
+        dx, dy = direction
+
+        length = math.hypot(dx, dy)
+        if length == 0:
+            return []
+
+        dx /= length
+        dy /= length
+
+        x, y = x0 + 0.5, y0 + 0.5  # 从格子中心出发
+
+        accumulated_smoke = 0.0
+        visible_cells = []
+        visited = set()
+
+        for _ in range(max_range * 2):  # 多一点步数防止漏格
+            x += dx * 0.5
+            y += dy * 0.5
+
+            gx, gy = int(x), int(y)
+            key = f"{gx},{gy}"
+
+            if key in visited:
+                continue
+            visited.add(key)
+
+            if key not in self.block_status[floor_name]:
+                break
+
+            if self.block_status[floor_name][key] == "null":
+                break
+
+            smoke = self.smoke_density[floor_name].get(key, 0)
+            smoke_norm = smoke / 100.0
+
+            accumulated_smoke += smoke_norm
+            visible_cells.append(key)
+
+            if accumulated_smoke >= smoke_threshold:
+                break
+
+        return visible_cells
+
+    def get_responders(self, floor_name):
+        responders = []
+
+        floors = self.map_obj.get_data() or []
+
+        for floor in floors:
+            if floor.get("name") != floor_name:
+                continue
+
+            for p in floor.get("points", []):
+                if p.get("type") == "responder":
+                    x, y = p["x"], p["y"]
+                    key = f"{x},{y}"
+                    responders.append((key, (x, y)))
+
+        return responders
+
     def web_server(self):
         HTTP_ADDR = os.getenv('FIRE_EVACUATION_HTTP_ADDR', '0.0.0.0')
         HTTP_PORT = int(os.getenv('FIRE_EVACUATION_HTTP_PORT', '8001'))
@@ -381,6 +491,23 @@ class MapDataService:
         @app.route("/api/probability_map")
         def api_probability_map():
             return jsonify(self.probability_map)
+        
+        @app.route("/api/responder_visibility")
+        def api_responder_visibility():
+            result = {}
+
+            for fname in self.block_status:
+                responders = self.get_responders(fname)
+
+                if not responders:
+                    result[fname] = {}
+                    continue
+
+                vis_map = self.compute_visibility_for_responders(fname, responders)
+
+                result[fname] = vis_map
+
+            return jsonify(result)
 
         logger.info(f"Map Runtime Server http://{HTTP_ADDR}:{HTTP_PORT}")
         app.run(HTTP_ADDR, HTTP_PORT)

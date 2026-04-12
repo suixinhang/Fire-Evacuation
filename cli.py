@@ -51,15 +51,17 @@ def replay(map_id, record_id, http_addr, http_port):
 
 @click.command(help="Test Smoke Distrubution")
 @click.option('--debug', is_flag=True, help="Debug")
+@click.option('--no-record', is_flag=True, help="Record")
 @click.option('--map-id', help="Use which map?", type = str)
 @click.option('--http-addr', help="HTTP Server Addr", default = "0.0.0.0", type = str)
 @click.option('--http-port', help="HTTP Server Port", default = 8000, type = int)
 @click.option('--speed', help="Simulation speed multiplier", default = 1.0, type = float) # 新增参数
-def test_smoke(debug, map_id, http_addr, http_port, speed):
+def test_smoke(debug, no_record, map_id, http_addr, http_port, speed):
     """
     Test Smoke Distrubution
     """
     os.environ["FIRE_EVACUATION_DEBUG"] = '1' if debug else '0'
+    os.environ["FIRE_EVACUATION_NO_RECORD"] = '1' if no_record else '0'
     if not map_id:
         raise ValueError("No provided good map id!")
         exit(-1)
