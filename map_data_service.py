@@ -29,6 +29,7 @@ class MapDataService:
             raise ValueError("No provided good map id!")
 
         self.map_obj = Map(map_id=USE_MAP_ID)
+        self.is_web_server_on = False
 
         self.block_status = {}
         self.smoke_density = {}
@@ -139,17 +140,17 @@ class MapDataService:
                     sim.wall[y, x] = 1
 
                 elif t == "fire_origin":
-                    self.block_status[fname][key] = "fire"
+                    self.block_status[fname][key] = "null"
                     self.smoke_density[fname][key] = 100
                     self.fire_origins[fname].append((x, y))
 
-                elif t in ("entrance", "door"):
-                    self.block_status[fname][key] = "entrance"
+                elif t == "entrance":
+                    self.block_status[fname][key] = "null"
                     self.smoke_density[fname][key] = 0
                     self.entrances[fname].append((x, y))
 
                 else:
-                    self.block_status[fname][key] = "walkable"
+                    self.block_status[fname][key] = "unwatched"
                     self.smoke_density[fname][key] = 0
         
         for fname in self.simulators:
@@ -563,7 +564,12 @@ class MapDataService:
 
             return jsonify(result)
 
+        @app.route("/api/get_time")
+        def get_time():
+            return jsonify({"res": self.global_time})
+
         logger.info(f"Map Runtime Server http://{HTTP_ADDR}:{HTTP_PORT}")
+        self.is_web_server_on = True
         app.run(HTTP_ADDR, HTTP_PORT)
 
 

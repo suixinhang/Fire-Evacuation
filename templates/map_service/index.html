@@ -68,6 +68,8 @@
     <p class="has-text-weight-semibold mb-2">Legend</p>
     <div id="legend"></div>
   </div>
+
+  <p style="font-size: xx-large;font-weight: bolder;">Now time: <span id="timeshow"></span></p>
 </div>
 
 </div>
@@ -116,6 +118,7 @@ const ctx = canvas.getContext("2d");
 const tooltip = document.getElementById("tooltip");
 const legend = document.getElementById("legend");
 const floorSelect = document.getElementById("floorSelect");
+const timeshow = document.getElementById("timeshow");
 
 canvas.width  = GRID_COUNT * GRID;
 canvas.height = GRID_COUNT * GRID;
@@ -492,6 +495,9 @@ function fetchAll() {
   });
   fetch("/api/responder_visibility").then(r => r.json()).then(d => {
     visibilityMap = d;
+  });
+  fetch("/api/get_time").then(r => r.json()).then(d => {
+    timeshow.innerText = d.res;
   });
 }
 
