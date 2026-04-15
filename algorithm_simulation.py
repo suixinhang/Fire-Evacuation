@@ -1,5 +1,6 @@
 import os
 import time
+import math
 from tqdm import tqdm
 
 from map_data_service import MapDataServiceObj
@@ -23,43 +24,44 @@ print(f"Starting simulation. Speed Multiplier: {speed}x")
 step_counter = 0
 target_dt = dt
 
-responder_targets = {}  # rid -> (tx, ty)
+responder_targets = {}
+last_positions = {}  # ⭐ 防抖关键
 
-while True:
-    start_time = time.time()
-    step_counter += 1
+# ===== occupants =====
+def get_occupants_set():
+    s = set()
+    for floor in MapDataServiceObj.map_obj.get_data():
+        if floor["name"] != floor_name:
+            continue
+        for p in floor["points"]:
+            if p.get("type") == "occupant":
+                s.add(f"{p['x']},{p['y']}")
+    return s
 
-    # print(f"\n[STEP {step_counter}]")
+# ===== 清除 uncertain =====
+def clear_uncertain():
+    for k in MapDataServiceObj.block_status[floor_name]:
+        if MapDataServiceObj.block_status[floor_name][k] == "uncertain":
+            MapDataServiceObj.block_status[floor_name][k] = "unwatched"
 
-    responders = MapDataServiceObj.get_responders(floor_name)
+# ===== 标记 uncertain =====
+def mark_uncertain_circle(center, radius):
+    cx, cy = center
+    for key in MapDataServiceObj.block_status[floor_name]:
+        if MapDataServiceObj.block_status[floor_name][key] != "unwatched":
+            continue
 
-    # ===== 1/6 视野更新 =====
-    # print("1/6 Updating visibility...")
+        x, y = map(int, key.split(","))
 
-    vis_map = MapDataServiceObj.compute_visibility_for_responders(
-        floor_name,
-        responders
-    )
+        if (x - cx) ** 2 + (y - cy) ** 2 <= radius ** 2:
+            MapDataServiceObj.block_status[floor_name][key] = "uncertain"
 
-    for rid, (rx, ry) in responders:
-        MapDataServiceObj.block_status[floor_name][rid] = "watched"
-
-    for rid, visible in vis_map.items():
-        for key in visible:
-            MapDataServiceObj.block_status[floor_name][key] = "watched"
-
-    # ===== 2/6 连通区域 =====
-    # print("2/6 Finding regions...")
-
+# ===== 区域 =====
+def compute_regions():
     visited = set()
     regions = []
 
-    for key, status in tqdm(
-        MapDataServiceObj.block_status[floor_name].items(),
-        desc="Scanning regions",
-        leave=False,
-        ncols=80
-    ):
+    for key, status in MapDataServiceObj.block_status[floor_name].items():
         if status != "unwatched" or key in visited:
             continue
 
@@ -90,28 +92,56 @@ while True:
             for dx, dy in [(1,0),(-1,0),(0,1),(0,-1)]:
                 nk = f"{x+dx},{y+dy}"
 
-                if MapDataServiceObj.block_status[floor_name].get(nk) == "watched":
+                if MapDataServiceObj.block_status[floor_name].get(nk) in ("watched", "uncertain"):
                     boundary.append((x, y))
                     break
 
         regions.append((comp, boundary))
 
-    # ===== 3/6 frontier =====
-    # print("3/6 Building frontiers...")
+    return regions
 
+# ===== frontier =====
+def build_candidates(regions):
     candidates = []
     for comp, boundary in regions:
         area = len(comp)
         for (x, y) in boundary:
             candidates.append((x, y, area))
+    return candidates
 
-    # ===== 4/6 分配任务 =====
-    # print("4/6 Assigning tasks...")
 
-    free_responders = []
-    for rid, pos in responders:
-        if rid not in responder_targets:
-            free_responders.append((rid, pos))
+while True:
+    start_time = time.time()
+    step_counter += 1
+
+    responders = MapDataServiceObj.get_responders(floor_name)
+
+    # ===== 1. 清理 uncertain =====
+    clear_uncertain()
+
+    # ===== 2. 更新视野 =====
+    vis_map = MapDataServiceObj.compute_visibility_for_responders(
+        floor_name,
+        responders
+    )
+
+    for rid, (rx, ry) in responders:
+        MapDataServiceObj.block_status[floor_name][rid] = "watched"
+
+    for rid, visible in vis_map.items():
+        for key in visible:
+            MapDataServiceObj.block_status[floor_name][key] = "watched"
+
+    occupants_set = get_occupants_set()
+
+    # ===== 3. 分配 =====
+    regions = compute_regions()
+    candidates = build_candidates(regions)
+
+    free_responders = [
+        (rid, pos) for rid, pos in responders
+        if rid not in responder_targets
+    ]
 
     assigned_targets = set()
 
@@ -119,12 +149,7 @@ while True:
         best = None
         best_score = float("inf")
 
-        for rid, (rx, ry) in tqdm(
-            free_responders,
-            desc="Assigning responders",
-            leave=False,
-            ncols=80
-        ):
+        for rid, (rx, ry) in free_responders:
             for (tx, ty, area) in candidates:
                 if (tx, ty) in assigned_targets:
                     continue
@@ -142,66 +167,74 @@ while True:
 
                 if score < best_score:
                     best_score = score
-                    best = (rid, (rx, ry), (tx, ty))
+                    best = (rid, (tx, ty))
 
         if not best:
             break
 
-        rid, _, target = best
-        responder_targets[rid] = target
-        assigned_targets.add(target)
+        rid, (tx, ty) = best
+        responder_targets[rid] = (tx, ty)
+        assigned_targets.add((tx, ty))
+
+        # ===== uncertain =====
+        vis_area = len(vis_map.get(rid, []))
+        radius = max(1, int(math.sqrt(vis_area / math.pi)))
+
+        mark_uncertain_circle((tx, ty), radius)
 
         free_responders = [r for r in free_responders if r[0] != rid]
 
-    # ===== 5/6 移动 + 救援 =====
-    # print("5/6 Moving responders...")
-
+    # ===== 4. 移动 =====
     for rid, (rx, ry) in responders:
         visible = vis_map.get(rid, [])
 
-        # 找最近 occupant
+        # ===== 找人 =====
         nearest_occ = None
         best_d = float("inf")
 
         for key in visible:
-            if MapDataServiceObj.block_status[floor_name].get(key) == "occupant":
+            if key in occupants_set:
                 x, y = map(int, key.split(","))
                 d = abs(x - rx) + abs(y - ry)
+
                 if d < best_d:
                     best_d = d
                     nearest_occ = (x, y)
 
-        # 如果看到人 → 覆盖目标
+        # ===== 🚑 救援模式 =====
         if nearest_occ:
-            responder_targets[rid] = nearest_occ
+            tx, ty = nearest_occ
+        else:
+            target = responder_targets.get(rid)
+            if not target:
+                continue
+            tx, ty = target
 
-        target = responder_targets.get(rid)
-        if not target:
-            continue
-
-        # 到达目标（可能是人）
-        if target == (rx, ry):
-            floors = MapDataServiceObj.map_obj.get_data()
-            for floor in floors:
-                if floor["name"] != floor_name:
-                    continue
-
-                floor["points"] = [
-                    p for p in floor["points"]
-                    if not (p.get("type") == "occupant" and p["x"] == rx and p["y"] == ry)
-                ]
-
+        # 到达
+        if (rx, ry) == (tx, ty):
+            if nearest_occ:
+                for floor in MapDataServiceObj.map_obj.get_data():
+                    if floor["name"] != floor_name:
+                        continue
+                    floor["points"] = [
+                        p for p in floor["points"]
+                        if not (p.get("type") == "occupant" and p["x"] == rx and p["y"] == ry)
+                    ]
             responder_targets.pop(rid, None)
             continue
 
-        # 正常走一步
+        # ===== ⭐ 防抖移动 =====
+        prev = last_positions.get(rid)
+
         best_next = None
         best_d = float("inf")
 
-        tx, ty = target
-
         for dx, dy in [(1,0),(-1,0),(0,1),(0,-1)]:
             nx, ny = rx + dx, ry + dy
+
+            if prev and (nx, ny) == prev:
+                continue  # ⭐ 禁止回头
+
             nk = f"{nx},{ny}"
 
             if nk not in MapDataServiceObj.block_status[floor_name]:
@@ -210,14 +243,7 @@ while True:
             if MapDataServiceObj.block_status[floor_name][nk] == "null":
                 continue
 
-            d = MapDataServiceObj.astar_distance(
-                floor_name,
-                (nx, ny),
-                [target]
-            )
-
-            if d is None:
-                continue
+            d = abs(nx - tx) + abs(ny - ty)
 
             if d < best_d:
                 best_d = d
@@ -226,8 +252,7 @@ while True:
         if best_next:
             nx, ny = best_next
 
-            floors = MapDataServiceObj.map_obj.get_data()
-            for floor in floors:
+            for floor in MapDataServiceObj.map_obj.get_data():
                 if floor["name"] != floor_name:
                     continue
 
@@ -236,16 +261,10 @@ while True:
                         p["x"], p["y"] = nx, ny
                         break
 
-    # ===== 6/6 推进模拟 =====
-    # print("6/6 Simulation step...")
+            # ⭐ 记录上一位置（关键）
+            last_positions[rid] = (rx, ry)
 
+    # ===== 5. 时间控制 =====
     elapsed = time.time() - start_time
-    # print("before simulation: ", elapsed)
-
-    MapDataServiceObj.update_simulation(dt, speed_multiplier=speed)
-
-    # ===== 动态 sleep =====
-    elapsed = time.time() - start_time
-    # print("after simulation: ", elapsed)
     if elapsed < target_dt:
         time.sleep(target_dt - elapsed)
