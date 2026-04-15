@@ -56,9 +56,9 @@ def replay(map_id, record_id, http_addr, http_port):
 @click.option('--http-addr', help="HTTP Server Addr", default = "0.0.0.0", type = str)
 @click.option('--http-port', help="HTTP Server Port", default = 8000, type = int)
 @click.option('--speed', help="Simulation speed multiplier", default = 1.0, type = float) # 新增参数
-def test_smoke(debug, no_record, map_id, http_addr, http_port, speed):
+def algorithm_simulation(debug, no_record, map_id, http_addr, http_port, speed):
     """
-    Test Smoke Distrubution
+    Algorithm Simulation
     """
     os.environ["FIRE_EVACUATION_DEBUG"] = '1' if debug else '0'
     os.environ["FIRE_EVACUATION_NO_RECORD"] = '1' if no_record else '0'
@@ -69,13 +69,13 @@ def test_smoke(debug, no_record, map_id, http_addr, http_port, speed):
     os.environ["FIRE_EVACUATION_HTTP_ADDR"] = http_addr
     os.environ["FIRE_EVACUATION_HTTP_PORT"] = str(http_port)
     os.environ["FIRE_EVACUATION_SPEED"] = str(speed)
-    import smoke_distrubution
+    import algorithm_simulation
 
 cli.add_command(draw_map)
 cli.add_command(export_map)
 cli.add_command(import_map)
 cli.add_command(replay)
-cli.add_command(test_smoke)
+cli.add_command(algorithm_simulation)
 
 if __name__ == '__main__':
     cli()
