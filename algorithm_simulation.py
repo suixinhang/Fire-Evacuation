@@ -35,12 +35,15 @@ last_positions = {}  # ⭐ 防抖关键
 # ===== occupants =====
 def get_occupants_set():
     s = set()
+
     for floor in MapDataServiceObj.map_obj.get_data():
         if floor["name"] != floor_name:
             continue
+
         for p in floor["points"]:
             if p.get("type") == "occupant":
                 s.add(f"{p['x']},{p['y']}")
+
     return s
 
 # ===== 清除 uncertain =====
@@ -215,16 +218,19 @@ while True:
                 continue
             tx, ty = target
 
-        # 到达
+        # ===== 到达目标 =====
         if (rx, ry) == (tx, ty):
             if nearest_occ:
                 for floor in MapDataServiceObj.map_obj.get_data():
                     if floor["name"] != floor_name:
                         continue
+
+                    # ⭐ 删除 occupant（修正为 tx, ty）
                     floor["points"] = [
                         p for p in floor["points"]
-                        if not (p.get("type") == "occupant" and p["x"] == rx and p["y"] == ry)
+                        if not (p.get("type") == "occupant" and p["x"] == tx and p["y"] == ty)
                     ]
+
             responder_targets.pop(rid, None)
             continue
 
@@ -238,7 +244,7 @@ while True:
             nx, ny = rx + dx, ry + dy
 
             if prev and (nx, ny) == prev:
-                continue  # ⭐ 禁止回头
+                continue
 
             nk = f"{nx},{ny}"
 
@@ -254,6 +260,7 @@ while True:
                 best_d = d
                 best_next = (nx, ny)
 
+        # ===== ⭐ 核心修复：防重复点 =====
         if best_next:
             nx, ny = best_next
 
@@ -261,13 +268,50 @@ while True:
                 if floor["name"] != floor_name:
                     continue
 
+                # ⭐ 1. 删除目标格子已有 responder（关键！！！）
+                floor["points"] = [
+                    p for p in floor["points"]
+                    if not (p.get("type") == "responder" and p["x"] == nx and p["y"] == ny)
+                ]
+
+                # ⭐ 2. 移动当前 responder
                 for p in floor["points"]:
                     if p.get("type") == "responder" and p["x"] == rx and p["y"] == ry:
                         p["x"], p["y"] = nx, ny
                         break
 
-            # ⭐ 记录上一位置（关键）
+            # ⭐ 记录上一位置
             last_positions[rid] = (rx, ry)
+
+
+    for floor in MapDataServiceObj.map_obj.get_data():
+        if floor["name"] != floor_name:
+            continue
+
+        coord_map = {}
+
+        for p in floor["points"]:
+            key = (p["x"], p["y"])
+
+            # ===== 优先级（谁保留）=====
+            priority = {
+                "responder": 3,
+                "occupant": 2,
+                "wall": 1
+            }
+
+            t = p.get("type")
+            pr = priority.get(t, 0)
+
+            if key not in coord_map:
+                coord_map[key] = (pr, p)
+            else:
+                # ⭐ 保留优先级更高的
+                if pr > coord_map[key][0]:
+                    coord_map[key] = (pr, p)
+
+        # ⭐ 重建 points（彻底无重复）
+        floor["points"] = [v[1] for v in coord_map.values()]
 
     # ===== 5. 时间控制 =====
     elapsed = time.time() - start_time

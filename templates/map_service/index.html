@@ -418,9 +418,10 @@ canvas.addEventListener("mousemove", e => {
   if (viewMode === "block_type") {
     const floor = mapData.find(f => f.name === currentFloor);
     const point = floor?.points.find(p => p.x === x && p.y === y);
+    // console.log(point)
     if (!point || !point.type) {
       tooltip.style.display = "none";
-      return;
+      // return;
     }
     text += `<br>Type: ${TYPE_MAP[point.type]?.name}`;
   }
@@ -455,6 +456,7 @@ canvas.addEventListener("mousemove", e => {
     if (point.type === "responder") {
       const vis = visibilityMap[currentFloor]?.[key];
       hoverVisibleCells = vis || [];
+      // console.log(vis)
     } else {
       hoverVisibleCells = [];
     }
