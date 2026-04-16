@@ -3,22 +3,27 @@ import time
 import math
 from tqdm import tqdm
 
+import logging
+from smoke_simulation import SmokeSimulation
+logger = logging.getLogger("FIRE_EVACUATION")
+
 from map_data_service import MapDataServiceObj
 
 speed = float(os.getenv('FIRE_EVACUATION_SPEED', '1.0'))
 dt = 1  # 模拟系统基础步长
 
-# 地图初始放人 目前不需要
-# MapDataServiceObj.spawn_occupants_by_probability(n_per_floor=10)
-
 # 地图目前只看一层 第一层
 floor_name = MapDataServiceObj.map_obj.get_data()[0]["name"]
 
+logger.info("Waiting the inital....")
 # 等待网页服务器开启
-while not MapDataServiceObj.is_web_server_on:
+while not MapDataServiceObj.is_init_end:
     ...
 
-print(f"Starting simulation. Speed Multiplier: {speed}x")
+# 地图初始放人 目前不需要
+# MapDataServiceObj.spawn_occupants_by_probability(n_per_floor=10)
+
+logger.info(f"Starting simulation. Speed Multiplier: {speed}x")
 
 
 step_counter = 0

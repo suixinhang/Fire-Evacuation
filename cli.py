@@ -52,14 +52,16 @@ def replay(map_id, record_id, http_addr, http_port):
 @click.command(help="Test Smoke Distrubution")
 @click.option('--debug', is_flag=True, help="Debug")
 @click.option('--no-record', is_flag=True, help="Record")
+@click.option('--dis-prob', is_flag=True, help="Disable init probability")
 @click.option('--map-id', help="Use which map?", type = str)
 @click.option('--http-addr', help="HTTP Server Addr", default = "0.0.0.0", type = str)
 @click.option('--http-port', help="HTTP Server Port", default = 8000, type = int)
 @click.option('--speed', help="Simulation speed multiplier", default = 1.0, type = float) # 新增参数
-def algorithm_simulation(debug, no_record, map_id, http_addr, http_port, speed):
+def algorithm_simulation(debug, no_record, dis_prob, map_id, http_addr, http_port, speed):
     """
     Algorithm Simulation
     """
+    os.environ["FIRE_EVACUATION_DISABLE_INIT_PROBABILITY"] = '1' if dis_prob else '0'
     os.environ["FIRE_EVACUATION_DEBUG"] = '1' if debug else '0'
     os.environ["FIRE_EVACUATION_NO_RECORD"] = '1' if no_record else '0'
     if not map_id:

@@ -29,7 +29,7 @@ class MapDataService:
             raise ValueError("No provided good map id!")
 
         self.map_obj = Map(map_id=USE_MAP_ID)
-        self.is_web_server_on = False
+        self.is_init_end = False
 
         self.block_status = {}
         self.smoke_density = {}
@@ -52,6 +52,11 @@ class MapDataService:
         t = threading.Thread(target=self.web_server, daemon=True)
         t.start()
         logger.info("Started Map Web Server Thread.")
+
+        logger.info("Starting init runtime data.")
+        self.init_runtime_data()
+        logger.info("End init runtime data.")
+        self.is_init_end = True
 
     def init_runtime_data(self):
         self.block_status.clear()
@@ -152,9 +157,10 @@ class MapDataService:
                 else:
                     self.block_status[fname][key] = "unwatched"
                     self.smoke_density[fname][key] = 0
-        
-        for fname in self.simulators:
-            self.update_probability_by_astar(fname)
+
+        if os.getenv('FIRE_EVACUATION_DISABLE_INIT_PROBABILITY') == "0":
+            for fname in self.simulators:
+                self.update_probability_by_astar(fname)
 
     def astar_distance(self, floor_name, start, entrances):
         """
@@ -521,7 +527,6 @@ class MapDataService:
         HTTP_PORT = int(os.getenv('FIRE_EVACUATION_HTTP_PORT', '8001'))
 
         app = Flask(__name__)
-        self.init_runtime_data()
 
         log = logging.getLogger('werkzeug')
         log.disabled = True
@@ -569,7 +574,6 @@ class MapDataService:
             return jsonify({"res": self.global_time})
 
         logger.info(f"Map Runtime Server http://{HTTP_ADDR}:{HTTP_PORT}")
-        self.is_web_server_on = True
         app.run(HTTP_ADDR, HTTP_PORT)
 
 
