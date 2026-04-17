@@ -38,7 +38,7 @@ class MapDataService:
         self.entrances = {}
         self.global_time = 0.0
         self.visibility_map = {}
-
+        self.global_memory_occupants = {}
         self.simulators = {}
         self.fire_origins = {}
 
@@ -276,6 +276,16 @@ class MapDataService:
                 val = float(sim.smoke[y, x])
                 self.smoke_density[fname][key] = min(100.0, max(0.0, val))
 
+        for fname in self.simulators:
+                responders = self.get_responders(fname)
+                # 1. 计算当前所有人的实时视野
+                vis_results = self.compute_visibility_for_responders(fname, responders)
+                
+                # 2. 将这些视野合并到全局 block_status 中
+                for rid, visible_cells in vis_results.items():
+                    for key in visible_cells:
+                        # 只要扫过，就标记为已观测，这会覆盖之前的 unwatched 或遗留状态
+                        self.block_status[fname][key] = "watched"
         for fname in self.simulators:
             self.update_probability_by_astar(fname)
 
