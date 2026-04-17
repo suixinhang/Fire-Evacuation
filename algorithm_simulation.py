@@ -1,36 +1,28 @@
 import os
 import time
 import math
-from tqdm import tqdm
 
 import logging
-from smoke_simulation import SmokeSimulation
 logger = logging.getLogger("FIRE_EVACUATION")
 
 from map_data_service import MapDataServiceObj
 
 speed = float(os.getenv('FIRE_EVACUATION_SPEED', '1.0'))
-dt = 1  # 模拟系统基础步长
+dt = 1
 
-# 地图目前只看一层 第一层
 floor_name = MapDataServiceObj.map_obj.get_data()[0]["name"]
 
-logger.info("Waiting the inital....")
-# 等待网页服务器开启
+logger.info("Waiting the initial....")
 while not MapDataServiceObj.is_init_end:
     ...
 
-# 地图初始放人 目前不需要
-# MapDataServiceObj.spawn_occupants_by_probability(n_per_floor=10)
-
 logger.info(f"Starting simulation. Speed Multiplier: {speed}x")
-
 
 step_counter = 0
 target_dt = dt
 
 responder_targets = {}
-last_positions = {}  # ⭐ 防抖关键
+last_positions = {}
 
 # ===== occupants =====
 def get_occupants_set():
@@ -46,15 +38,18 @@ def get_occupants_set():
 
     return s
 
+
 # ===== 清除 uncertain =====
 def clear_uncertain():
     for k in MapDataServiceObj.block_status[floor_name]:
         if MapDataServiceObj.block_status[floor_name][k] == "uncertain":
             MapDataServiceObj.block_status[floor_name][k] = "unwatched"
 
+
 # ===== 标记 uncertain =====
 def mark_uncertain_circle(center, radius):
     cx, cy = center
+
     for key in MapDataServiceObj.block_status[floor_name]:
         if MapDataServiceObj.block_status[floor_name][key] != "unwatched":
             continue
@@ -64,7 +59,8 @@ def mark_uncertain_circle(center, radius):
         if (x - cx) ** 2 + (y - cy) ** 2 <= radius ** 2:
             MapDataServiceObj.block_status[floor_name][key] = "uncertain"
 
-# ===== 区域 =====
+
+# ===== 区域划分 =====
 def compute_regions():
     visited = set()
     regions = []
@@ -108,6 +104,7 @@ def compute_regions():
 
     return regions
 
+
 # ===== frontier =====
 def build_candidates(regions):
     candidates = []
@@ -118,6 +115,7 @@ def build_candidates(regions):
     return candidates
 
 
+# ================= 主循环 =================
 while True:
     start_time = time.time()
     step_counter += 1
@@ -127,7 +125,7 @@ while True:
     # ===== 1. 清理 uncertain =====
     clear_uncertain()
 
-    # ===== 2. 更新视野 =====
+    # ===== 2. 视野更新 =====
     vis_map = MapDataServiceObj.compute_visibility_for_responders(
         floor_name,
         responders
@@ -142,7 +140,7 @@ while True:
 
     occupants_set = get_occupants_set()
 
-    # ===== 3. 分配 =====
+    # ===== 3. 任务分配 =====
     regions = compute_regions()
     candidates = build_candidates(regions)
 
@@ -184,7 +182,6 @@ while True:
         responder_targets[rid] = (tx, ty)
         assigned_targets.add((tx, ty))
 
-        # ===== uncertain =====
         vis_area = len(vis_map.get(rid, []))
         radius = max(1, int(math.sqrt(vis_area / math.pi)))
 
@@ -192,11 +189,11 @@ while True:
 
         free_responders = [r for r in free_responders if r[0] != rid]
 
-    # ===== 4. 移动 =====
+    # ===== 4. 移动（核心重写）=====
     for rid, (rx, ry) in responders:
         visible = vis_map.get(rid, [])
 
-        # ===== 找人 =====
+        # ===== 找 occupant =====
         nearest_occ = None
         best_d = float("inf")
 
@@ -209,7 +206,6 @@ while True:
                     best_d = d
                     nearest_occ = (x, y)
 
-        # ===== 🚑 救援模式 =====
         if nearest_occ:
             tx, ty = nearest_occ
         else:
@@ -218,14 +214,13 @@ while True:
                 continue
             tx, ty = target
 
-        # ===== 到达目标 =====
+        # ===== 到达 =====
         if (rx, ry) == (tx, ty):
             if nearest_occ:
                 for floor in MapDataServiceObj.map_obj.get_data():
                     if floor["name"] != floor_name:
                         continue
 
-                    # ⭐ 删除 occupant（修正为 tx, ty）
                     floor["points"] = [
                         p for p in floor["points"]
                         if not (p.get("type") == "occupant" and p["x"] == tx and p["y"] == ty)
@@ -234,7 +229,7 @@ while True:
             responder_targets.pop(rid, None)
             continue
 
-        # ===== ⭐ 防抖移动 =====
+        # ===== 防抖移动 =====
         prev = last_positions.get(rid)
 
         best_next = None
@@ -260,58 +255,11 @@ while True:
                 best_d = d
                 best_next = (nx, ny)
 
-        # ===== ⭐ 核心修复：防重复点 =====
         if best_next:
             nx, ny = best_next
 
-            for floor in MapDataServiceObj.map_obj.get_data():
-                if floor["name"] != floor_name:
-                    continue
-
-                # ⭐ 1. 删除目标格子已有 responder（关键！！！）
-                floor["points"] = [
-                    p for p in floor["points"]
-                    if not (p.get("type") == "responder" and p["x"] == nx and p["y"] == ny)
-                ]
-
-                # ⭐ 2. 移动当前 responder
-                for p in floor["points"]:
-                    if p.get("type") == "responder" and p["x"] == rx and p["y"] == ry:
-                        p["x"], p["y"] = nx, ny
-                        break
-
-            # ⭐ 记录上一位置
+            MapDataServiceObj.responders[floor_name][rid] = (nx, ny)
             last_positions[rid] = (rx, ry)
-
-
-    for floor in MapDataServiceObj.map_obj.get_data():
-        if floor["name"] != floor_name:
-            continue
-
-        coord_map = {}
-
-        for p in floor["points"]:
-            key = (p["x"], p["y"])
-
-            # ===== 优先级（谁保留）=====
-            priority = {
-                "responder": 3,
-                "occupant": 2,
-                "wall": 1
-            }
-
-            t = p.get("type")
-            pr = priority.get(t, 0)
-
-            if key not in coord_map:
-                coord_map[key] = (pr, p)
-            else:
-                # ⭐ 保留优先级更高的
-                if pr > coord_map[key][0]:
-                    coord_map[key] = (pr, p)
-
-        # ⭐ 重建 points（彻底无重复）
-        floor["points"] = [v[1] for v in coord_map.values()]
 
     # ===== 5. 时间控制 =====
     elapsed = time.time() - start_time
