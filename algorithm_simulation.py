@@ -12,6 +12,9 @@ dt = 1
 
 floor_name = MapDataServiceObj.map_obj.get_data()[0]["name"]
 
+if os.getenv("FIRE_EVACUATION_RANDOM_OCCUPANT") !='0' :
+    MapDataServiceObj.respawn_occupants(floor_name, int(os.getenv("FIRE_EVACUATION_RANDOM_OCCUPANT")))
+
 logger.info("Waiting the initial....")
 while not MapDataServiceObj.is_init_end:
     ...

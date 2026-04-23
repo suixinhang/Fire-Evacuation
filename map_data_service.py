@@ -3,6 +3,7 @@ import sys
 import time
 import math
 import heapq
+import random
 import pathlib
 import threading
 
@@ -288,8 +289,72 @@ class MapDataService:
                     for key in visible_cells:
                         # 只要扫过，就标记为已观测，这会覆盖之前的 unwatched 或遗留状态
                         self.block_status[fname][key] = "watched"
-        for fname in self.simulators:
-            self.update_probability_by_astar(fname)
+
+    def respawn_occupants(self, floor_name, N):
+        """
+        清空地图中的 occupant，并根据 probability_map 随机生成 N 个 occupant
+        直接写入 map_obj（block_type）
+        """
+
+        floors = self.map_obj.get_data()
+        if not floors:
+            return
+
+        # ===== 1. 找到对应楼层 =====
+        target_floor = None
+        for floor in floors:
+            if floor.get("name") == floor_name:
+                target_floor = floor
+                break
+
+        if not target_floor:
+            return
+
+        points = target_floor.get("points", [])
+
+        # ===== 2. 删除已有 occupant =====
+        points = [p for p in points if p.get("type") != "occupant"]
+
+        # ===== 3. 构造候选格子 =====
+        probs = self.probability_map.get(floor_name, {})
+        valid_cells = []
+        weights = []
+
+        for key, prob in probs.items():
+            x, y = map(int, key.split(","))
+
+            status = self.block_status[floor_name].get(key)
+            if status == "null":
+                continue
+
+            valid_cells.append((x, y))
+            weights.append(prob)
+
+        if not valid_cells:
+            target_floor["points"] = points
+            return
+
+        total = sum(weights)
+        if total <= 0:
+            weights = [1.0 for _ in valid_cells]
+
+        # ===== 4. 概率采样 =====
+        chosen = random.choices(
+            population=valid_cells,
+            weights=weights,
+            k=N
+        )
+
+        # ===== 5. 写入 occupant =====
+        for (x, y) in chosen:
+            points.append({
+                "x": x,
+                "y": y,
+                "type": "occupant"
+            })
+
+        # ===== 6. 写回地图 =====
+        target_floor["points"] = points
 
     # ================= 可见性 =================
 
