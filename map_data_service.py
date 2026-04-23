@@ -40,6 +40,7 @@ class MapDataService:
         self.global_memory_occupants = {}
         self.simulators = {}
         self.fire_origins = {}
+        self.active_tasks = {}
 
         self.responders = {}
 
@@ -492,6 +493,10 @@ class MapDataService:
         @app.route("/api/get_time")
         def get_time():
             return jsonify({"res": self.global_time})
+        
+        @app.route("/api/active_tasks")
+        def api_active_tasks():
+            return jsonify(self.active_tasks)
 
         logger.info(f"Map Runtime Server http://{HTTP_ADDR}:{HTTP_PORT}")
         app.run(HTTP_ADDR, HTTP_PORT)

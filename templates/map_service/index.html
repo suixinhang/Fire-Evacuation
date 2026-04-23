@@ -133,6 +133,7 @@ let smokeDensity = {};
 let probabilityMap = {};
 let visibilityMap = {};
 let responders = {};
+let activeTasks = {};
 
 let currentFloor = null;
 let viewMode = "block_type";
@@ -248,6 +249,39 @@ function draw(){
     }
   }
 
+  /* ===== responder target ===== */
+  for (let rid in activeTasks) {
+    const task = activeTasks[rid];
+    const [tx, ty] = task.target;
+
+    ctx.fillStyle = task.type === "rescue" ? "#ffffff" : "#00ffff";
+    
+    ctx.beginPath();
+    ctx.arc(
+      tx * GRID + GRID / 2,
+      ty * GRID + GRID / 2,
+      6.6,
+      0,
+      Math.PI * 2
+    );
+    ctx.fill();
+
+    /* 轻微光晕 */
+    // ctx.fillStyle = task.type === "rescue"
+    //   ? "rgba(81, 154, 186,0.7)"
+    //   : "rgba(35,209,96,0.7)";
+
+    // ctx.beginPath();
+    // ctx.arc(
+    //   tx * GRID + GRID / 2,
+    //   ty * GRID + GRID / 2,
+    //   14,
+    //   0,
+    //   Math.PI * 2
+    // );
+    // ctx.fill();
+  }
+
   /* responders sprite */
   const rmap = responders[currentFloor] || {};
   for(let rid in rmap){
@@ -318,6 +352,15 @@ canvas.addEventListener("mousemove",e=>{
     hoverVisibleCells = [];
   }
 
+  if (hoveredResponderId && activeTasks[hoveredResponderId]) {
+    const t = activeTasks[hoveredResponderId].target;
+
+    // 目标点强化显示
+    const key = `${t[0]},${t[1]}`;
+
+    hoverVisibleCells = hoverVisibleCells.concat([key]);
+  }
+
   let text=`(${x},${y})`;
 
   if(viewMode==="block_type" && point && point.type !== null){
@@ -368,6 +411,9 @@ function fetchAll(){
   fetch("/api/get_time").then(r=>r.json()).then(d=>{
     timeshow.innerText=d.res.toFixed(2);
   });
+  fetch("/api/active_tasks")
+  .then(r => r.json())
+  .then(d => activeTasks = d);
 
   draw();
 }

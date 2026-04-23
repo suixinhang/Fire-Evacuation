@@ -100,6 +100,7 @@ def build_candidates(regions):
 
 # ================= 主循环 =================
 while True:
+    MapDataServiceObj.active_tasks = active_tasks
     start_time = time.time()
     step_counter += 1
 
