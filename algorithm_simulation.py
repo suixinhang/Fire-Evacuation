@@ -317,6 +317,7 @@ while True:
             active_tasks.pop(rid, None)
 
     # ===== 6. 时间控制 =====
+    MapDataServiceObj.update_simulation(dt)
     elapsed = time.time() - start_time
     if elapsed < target_dt:
         time.sleep(target_dt - elapsed)

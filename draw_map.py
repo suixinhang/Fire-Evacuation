@@ -1,7 +1,6 @@
 from flask import (
     Flask,
     render_template,
-    Response,
     request,
     jsonify,
     redirect

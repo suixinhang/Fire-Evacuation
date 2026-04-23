@@ -3,12 +3,10 @@ import sys
 import time
 import math
 import heapq
-import random
 import pathlib
 import threading
-from collections import deque
 
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, jsonify
 from map import Map
 
 import logging
@@ -199,6 +197,10 @@ class MapDataService:
 
             for dx, dy in [(1,0),(-1,0),(0,1),(0,-1)]:
                 nx, ny = x + dx, y + dy
+
+                if (nx, ny) in entrances:
+                    return g + 1
+
                 key = f"{nx},{ny}"
 
                 if key not in self.block_status[floor_name]:
