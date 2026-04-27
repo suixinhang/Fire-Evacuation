@@ -2,7 +2,9 @@ import os
 import sys
 import time
 import math
+import json
 import heapq
+import atexit
 import random
 import pathlib
 import threading
@@ -44,11 +46,17 @@ class MapDataService:
 
         self.responders = {}
 
+        self.record_fp = None
+        self.record_step = 0
+
         if not os.getenv('FIRE_EVACUATION_USE_RECORD_ID') and os.getenv('FIRE_EVACUATION_NO_RECORD') == "0":
             self.record_name = str(int(time.time()))
             self.record_path = pathlib.Path(__file__).parent / "record" / (self.record_name + ".txt")
-            self.record_fp = open(self.record_path, "w+")
+
+            self.record_fp = open(self.record_path, "a", encoding="utf-8")
             logger.info(f"Record start, file name is {self.record_name}.txt")
+
+            atexit.register(self._close_record)
 
         t = threading.Thread(target=self.web_server, daemon=True)
         t.start()
@@ -175,6 +183,38 @@ class MapDataService:
             for fname in self.simulators:
                 self.update_probability_by_astar(fname)
 
+    def _write_frame(self):
+        if not self.record_fp:
+            return
+
+        # ===== block_type（你漏掉的关键）=====
+        block_type_snapshot = self.map_obj.get_data()
+
+        frame = {
+            "step": self.record_step,
+            "time": self.global_time,
+
+            # ===== 全量状态 =====
+            "block_type": block_type_snapshot,
+            "block_status": self.block_status,
+            "smoke_density": self.smoke_density,
+            "probability_map": self.probability_map,
+            "responders": self.responders,
+        }
+
+        try:
+            self.record_fp.write(json.dumps(frame, ensure_ascii=False) + "\n")
+            self.record_fp.flush()
+            os.fsync(self.record_fp.fileno())
+        except Exception as e:
+            logger.error(f"Record write error: {e}")
+
+        self.record_step += 1
+
+    def _close_record(self):
+        if self.record_fp:
+            self.record_fp.close()
+
     # ================= A* =================
 
     def astar_distance(self, floor_name, start, entrances):
@@ -290,6 +330,8 @@ class MapDataService:
                     for key in visible_cells:
                         # 只要扫过，就标记为已观测，这会覆盖之前的 unwatched 或遗留状态
                         self.block_status[fname][key] = "watched"
+        
+        self._write_frame()
 
     def respawn_occupants(self, floor_name, N):
         """
