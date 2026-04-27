@@ -49,7 +49,7 @@ class ReplayRunner:
         # ===== 1. 恢复地图结构（block_type）=====
         if "block_type" in frame:
             try:
-                MapDataServiceObj.map_obj.change_data_all(frame["block_type"])
+                MapDataServiceObj.map_obj.change_data_all(frame["block_type"], is_save=False)
             except Exception as e:
                 print(f"[Replay] map_obj.set_data failed: {e}")
 
@@ -113,4 +113,4 @@ if not record_id:
     raise ValueError("Need FIRE_EVACUATION_USE_RECORD_ID")
 
 runner = ReplayRunner(record_id)
-runner.run()
+runner.run(1)

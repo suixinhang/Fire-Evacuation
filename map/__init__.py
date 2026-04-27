@@ -57,26 +57,31 @@ class Map:
     def get_data(self):
         return self.__map_data
     
-    def change_name(self, new_name):
+    def change_name(self, new_name, is_save = True):
         self.__map_name = new_name
-        self.save_to_disk()
-    
-    def change_data_all(self, data):
-        self.__map_data = data
-        self.save_to_disk()
-    
-    def change_data_for_floor(self, floor, data):
-        self.__map_data[floor] = data
-        self.save_to_disk()
-    
-    def del_data_floor(self, floor):
-        if floor in self.__map_data:
-            del self.__map_data[floor]
+        if is_save:
             self.save_to_disk()
     
-    def clear_data(self):
+    def change_data_all(self, data, is_save = True):
+        self.__map_data = data
+        if is_save:
+            self.save_to_disk()
+    
+    def change_data_for_floor(self, floor, data, is_save = True):
+        self.__map_data[floor] = data
+        if is_save:
+            self.save_to_disk()
+    
+    def del_data_floor(self, floor, is_save = True):
+        if floor in self.__map_data:
+            del self.__map_data[floor]
+            if is_save:
+                self.save_to_disk()
+    
+    def clear_data(self, is_save = True):
         self.__map_data = {}
-        self.save_to_disk()
+        if is_save:
+            self.save_to_disk()
 
 logger.debug(f"Load map list...")
 if not (MAP_DATA_ROOT / 'list.json').exists():

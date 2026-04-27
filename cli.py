@@ -55,10 +55,11 @@ def replay(map_id, record_id, http_addr, http_port):
 @click.option('--dis-prob', is_flag=True, help="Disable init probability")
 @click.option('--random-occupant', help="Random Occupants", type = int, default = 0)
 @click.option('--map-id', help="Use which map?", type = str)
+@click.option('--use-old-fire-simulation', help="Use exist fire simulation record", default = "", type = str)
 @click.option('--http-addr', help="HTTP Server Addr", default = "0.0.0.0", type = str)
 @click.option('--http-port', help="HTTP Server Port", default = 8000, type = int)
-@click.option('--speed', help="Simulation speed multiplier", default = 1.0, type = float) # 新增参数
-def algorithm_simulation(debug, no_record, dis_prob, random_occupant, map_id, http_addr, http_port, speed):
+@click.option('--speed', help="Simulation speed multiplier", default = 1.0, type = float)
+def algorithm_simulation(debug, no_record, dis_prob, random_occupant, map_id, use_old_fire_simulation, http_addr, http_port, speed):
     """
     Algorithm Simulation
     """
@@ -70,6 +71,7 @@ def algorithm_simulation(debug, no_record, dis_prob, random_occupant, map_id, ht
         exit(-1)
     os.environ["FIRE_EVACUATION_RANDOM_OCCUPANT"] = str(random_occupant)
     os.environ["FIRE_EVACUATION_USE_MAP_ID"] = map_id
+    os.environ["FIRE_EVACUATION_USE_OLD_FIRE_SIMULATION"] = use_old_fire_simulation
     os.environ["FIRE_EVACUATION_HTTP_ADDR"] = http_addr
     os.environ["FIRE_EVACUATION_HTTP_PORT"] = str(http_port)
     os.environ["FIRE_EVACUATION_SPEED"] = str(speed)

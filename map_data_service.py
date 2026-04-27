@@ -306,19 +306,20 @@ class MapDataService:
         sim_dt = dt * speed_multiplier
         self.global_time += sim_dt
 
-        for fname, sim in self.simulators.items():
-            origins = self.fire_origins.get(fname, [])
+        if not os.getenv("FIRE_EVACUATION_USE_OLD_FIRE_SIMULATION"):
+            for fname, sim in self.simulators.items():
+                origins = self.fire_origins.get(fname, [])
 
-            sim.step(fire_origins=origins, dt=sim_dt)
+                sim.step(fire_origins=origins, dt=sim_dt)
 
-            for key in self.smoke_density[fname]:
-                x, y = map(int, key.split(","))
+                for key in self.smoke_density[fname]:
+                    x, y = map(int, key.split(","))
 
-                if sim.wall[y, x] == 1:
-                    continue
+                    if sim.wall[y, x] == 1:
+                        continue
 
-                val = float(sim.smoke[y, x])
-                self.smoke_density[fname][key] = min(100.0, max(0.0, val))
+                    val = float(sim.smoke[y, x])
+                    self.smoke_density[fname][key] = min(100.0, max(0.0, val))
 
         for fname in self.simulators:
                 responders = self.get_responders(fname)

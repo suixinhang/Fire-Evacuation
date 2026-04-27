@@ -1,6 +1,8 @@
 import os
 import time
 import math
+import json
+import pathlib
 
 import logging
 logger = logging.getLogger("FIRE_EVACUATION")
@@ -12,12 +14,51 @@ dt = 1
 
 floor_name = MapDataServiceObj.map_obj.get_data()[0]["name"]
 
-if os.getenv("FIRE_EVACUATION_RANDOM_OCCUPANT") !='0' :
-    MapDataServiceObj.respawn_occupants(floor_name, int(os.getenv("FIRE_EVACUATION_RANDOM_OCCUPANT")))
+# ===== occupants =====
+if os.getenv("FIRE_EVACUATION_RANDOM_OCCUPANT") != '0':
+    MapDataServiceObj.respawn_occupants(
+        floor_name,
+        int(os.getenv("FIRE_EVACUATION_RANDOM_OCCUPANT"))
+    )
+
+# ===== 读取烟雾记录（时间序列）=====
+use_old_fire_simulation = os.getenv("FIRE_EVACUATION_USE_OLD_FIRE_SIMULATION")
+
+smoke_frames = []
+smoke_index = 0
+
+if use_old_fire_simulation:
+    path = pathlib.Path(__file__).parent / "record" / (use_old_fire_simulation + ".txt")
+
+    if not path.exists():
+        raise FileNotFoundError(path)
+
+    print("[Smoke] Loading replay frames...")
+
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                frame = json.loads(line)
+                smoke_frames.append(frame)
+            except:
+                continue
+
+    print(f"[Smoke] Loaded {len(smoke_frames)} frames")
+
 
 logger.info("Waiting the initial....")
 while not MapDataServiceObj.is_init_end:
     ...
+
+
+# ===== 初始化烟雾状态 =====
+if smoke_frames:
+    first = smoke_frames[0]
+    MapDataServiceObj.smoke_density = first.get("smoke_density", {})
+    MapDataServiceObj.global_time = first.get("time", 0.0)
 
 logger.info(f"Starting simulation. Speed Multiplier: {speed}x")
 
@@ -320,8 +361,22 @@ while True:
             # 如果四个方向都没有 A* 路径，说明目标真的不可达（被火封死等）
             active_tasks.pop(rid, None)
 
-    # ===== 6. 时间控制 =====
-    MapDataServiceObj.update_simulation(dt)
+    # ===== 烟雾推进（核心）=====
+    if smoke_frames:
+        frame = smoke_frames[smoke_index]
+
+        MapDataServiceObj.smoke_density = frame.get("smoke_density", {})
+        MapDataServiceObj.global_time = frame.get("time", MapDataServiceObj.global_time)
+
+        smoke_index += 1
+
+        if smoke_index >= len(smoke_frames):
+            smoke_index = len(smoke_frames) - 1  # 停在最后一帧
+    else:
+        # 没有旧数据才用模拟
+        MapDataServiceObj.update_simulation(dt)
+
+    # ===== 时间控制 =====
     elapsed = time.time() - start_time
     if elapsed < target_dt:
         time.sleep(target_dt - elapsed)
