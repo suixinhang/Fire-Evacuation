@@ -59,7 +59,8 @@ def replay(map_id, record_id, http_addr, http_port):
 @click.option('--http-addr', help="HTTP Server Addr", default = "0.0.0.0", type = str)
 @click.option('--http-port', help="HTTP Server Port", default = 8000, type = int)
 @click.option('--speed', help="Simulation speed multiplier", default = 1.0, type = float)
-def algorithm_simulation(debug, no_record, dis_prob, random_occupant, map_id, use_old_fire_simulation, http_addr, http_port, speed):
+@click.option('--move-after', help="Move after what secound?", default = 0, type = int)
+def algorithm_simulation(debug, no_record, dis_prob, random_occupant, map_id, use_old_fire_simulation, http_addr, http_port, speed, move_after):
     """
     Algorithm Simulation
     """
@@ -75,6 +76,7 @@ def algorithm_simulation(debug, no_record, dis_prob, random_occupant, map_id, us
     os.environ["FIRE_EVACUATION_HTTP_ADDR"] = http_addr
     os.environ["FIRE_EVACUATION_HTTP_PORT"] = str(http_port)
     os.environ["FIRE_EVACUATION_SPEED"] = str(speed)
+    os.environ["FIRE_EVACUATION_MOVE_AFTER"] = str(move_after)
     import algorithm_simulation
 
 cli.add_command(draw_map)
