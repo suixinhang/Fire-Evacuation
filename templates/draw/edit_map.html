@@ -98,19 +98,25 @@ function setCell(x,y,data){
   if(!currentFloor) return;
 
   const idx=currentFloor.points.findIndex(p=>p.x===x&&p.y===y);
-  if(idx>=0) currentFloor.points.splice(idx,1);
 
-  const weight = data.weight ?? 0;
-  const type = data.type ?? null;
+  let existing = {};
+  if(idx>=0){
+    existing = currentFloor.points[idx];
+    currentFloor.points.splice(idx,1);
+  }
 
-  if(weight===0 && !type) return;
+  const cell = {
+    x,
+    y,
+    type: data.type ?? existing.type ?? null,
+    color: data.color ?? existing.color ?? null,
+    weight: data.weight ?? existing.weight ?? 0,
+    fire_weight: data.fire_weight ?? existing.fire_weight ?? 0
+  };
 
-  currentFloor.points.push({
-    x,y,
-    type,
-    color: data.color || null,
-    weight
-  });
+  if(cell.weight===0 && cell.fire_weight===0 && !cell.type) return;
+
+  currentFloor.points.push(cell);
 }
 
 function openTitleModal(){
@@ -151,10 +157,11 @@ function drawGrid(){
       ctx.fillRect(p.x*size,p.y*size,size,size);
     }
 
-    if(p.weight !== undefined && p.weight !== null && p.weight !== 0){
-      const bg = p.color || "#ffffff";
-      const isDark = getBrightness(bg) < 128;
+    const bg = p.color || "#ffffff";
+    const isDark = getBrightness(bg) < 128;
 
+    /* ===== 普通权重 ===== */
+    if(p.weight && p.weight !== 0){
       ctx.fillStyle = isDark ? "#fff" : "#000";
       ctx.textAlign="center";
       ctx.textBaseline="middle";
@@ -163,7 +170,21 @@ function drawGrid(){
       ctx.fillText(
         p.weight,
         p.x*size + size/2,
-        p.y*size + size/2
+        p.y*size + size/2 - 5
+      );
+    }
+
+    /* ===== 火源权重 ===== */
+    if(p.fire_weight && p.fire_weight !== 0){
+      ctx.fillStyle = "#ff0000";
+      ctx.textAlign="center";
+      ctx.textBaseline="middle";
+      ctx.font="10px sans-serif";
+
+      ctx.fillText(
+        p.fire_weight,
+        p.x*size + size/2,
+        p.y*size + size/2 + 5
       );
     }
   });
@@ -295,7 +316,11 @@ canvas.addEventListener("click",e=>{
   const existing=currentFloor.points.find(p=>p.x===x&&p.y===y);
 
   if(existing){
-    setCell(x,y,{type:null,weight:existing.weight});
+    setCell(x,y,{
+      type:null,
+      weight:existing.weight,
+      fire_weight: existing.fire_weight
+    });
   }else{
     setCell(x,y,{type:"wall",color:"#333",weight:0});
   }
@@ -352,7 +377,8 @@ canvas.addEventListener("contextmenu", e=>{
         setCell(c.x, c.y, {
           type: t.type,
           color: t.color,
-          weight: existing?.weight || 0
+          weight: existing?.weight || 0,
+          fire_weight: existing?.fire_weight || 0
         });
       });
 
@@ -380,7 +406,8 @@ canvas.addEventListener("contextmenu", e=>{
       setCell(c.x, c.y, {
         type: existing?.type || null,
         color: existing?.color || null,
-        weight: w
+        weight: w,
+        fire_weight: existing?.fire_weight || 0
       });
     });
 
@@ -389,6 +416,33 @@ canvas.addEventListener("contextmenu", e=>{
   };
 
   menuItems.appendChild(weightItem);
+
+  const fireWeightItem = document.createElement("a");
+  fireWeightItem.className = "dropdown-item";
+  fireWeightItem.textContent = "Edit Fire Weight";
+
+  fireWeightItem.onclick = ()=>{
+    const val = prompt("Fire Weight:");
+    if(val === null) return;
+
+    const w = parseFloat(val) || 0;
+
+    cells.forEach(c=>{
+      const existing = currentFloor.points.find(p=>p.x===c.x && p.y===c.y);
+
+      setCell(c.x, c.y, {
+        type: existing?.type || null,
+        color: existing?.color || null,
+        weight: existing?.weight || 0,
+        fire_weight: w   // 🔥 核心
+      });
+    });
+
+    menu.style.display="none";
+    drawGrid();
+  };
+
+  menuItems.appendChild(fireWeightItem);
 
   menu.style.left = e.pageX+"px";
   menu.style.top = e.pageY+"px";
@@ -435,7 +489,8 @@ function loadMap(id){
           y:p.y,
           type:p.type||null,
           color:p.color||null,
-          weight:p.weight||0
+          weight:p.weight||0,
+          fire_weight:p.fire_weight||0
         }))
       }));
 

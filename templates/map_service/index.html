@@ -54,6 +54,7 @@ canvas { background:#fff; border:1px solid #ccc; }
         <button class="button is-small" onclick="setView('block_status')">Block Status</button>
         <button class="button is-small" onclick="setView('smoke_density')">Smoke</button>
         <button class="button is-small" onclick="setView('probability')">Probability</button>
+        <button class="button is-small" onclick="setView('fire_probability')">Fire Prob</button>
       </div>
 
     </div>
@@ -131,6 +132,8 @@ let mapData = [];
 let blockStatus = {};
 let smokeDensity = {};
 let probabilityMap = {};
+let fireProbabilityMap = {};
+let fireWeightMap = {};
 let visibilityMap = {};
 let responders = {};
 let activeTasks = {};
@@ -179,6 +182,35 @@ function updateLegend(){
   if(viewMode==="smoke_density"){
     items = [["#000","wall"],["#fff","0"],["#ff0000","max"]];
   }
+
+  // if(viewMode==="fire_probability"){
+  //   const p = fireProbabilityMap[currentFloor] || {};
+  //   const w = fireWeightMap[currentFloor] || {};
+
+  //   for(let k in p){
+  //     const [x,y]=k.split(",").map(Number);
+
+  //     // 背景：概率颜色
+  //     ctx.fillStyle = probColor(p[k]);
+  //     ctx.fillRect(x*GRID,y*GRID,GRID,GRID);
+
+  //     // ===== 数字：原始 fire_weight =====
+  //     const val = w[k] ?? 0;
+
+  //     if(val > 0){
+  //       ctx.fillStyle = "#000";
+  //       ctx.font = "10px monospace";
+  //       ctx.textAlign = "center";
+  //       ctx.textBaseline = "middle";
+
+  //       ctx.fillText(
+  //         val.toFixed(0),
+  //         x*GRID + GRID/2,
+  //         y*GRID + GRID/2
+  //       );
+  //     }
+  //   }
+  // }
 
   items.forEach(([c,t])=>{
     const row=document.createElement("div");
@@ -246,6 +278,38 @@ function draw(){
       const [x,y]=k.split(",").map(Number);
       ctx.fillStyle = probColor(p[k]);
       ctx.fillRect(x*GRID,y*GRID,GRID,GRID);
+    }
+  }
+
+  /* fire probability + 原始权重 */
+  if(viewMode==="fire_probability"){
+    const p = fireProbabilityMap[currentFloor] || {};
+    const w = fireWeightMap[currentFloor] || {};
+
+    for(let k in p){
+      const [x,y]=k.split(",").map(Number);
+
+      // ===== 背景：概率 =====
+      ctx.fillStyle = probColor(p[k]);
+      ctx.fillRect(x*GRID,y*GRID,GRID,GRID);
+
+      // ===== 数字：原始权重 =====
+      const val = w[k] ?? 0;
+
+      if(val > 0){
+        ctx.fillStyle = "#000";
+
+        // ⭐ 字体稍微大一点更清晰
+        ctx.font = "bold 11px monospace";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+
+        ctx.fillText(
+          val.toFixed(0),
+          x*GRID + GRID/2,
+          y*GRID + GRID/2
+        );
+      }
     }
   }
 
@@ -379,6 +443,10 @@ canvas.addEventListener("mousemove",e=>{
     text += `<br>Status: ${blockStatus[currentFloor]?.[key] ?? "null"}`;
   }
 
+  if(viewMode==="fire_probability"){
+    text += `<br>Fire P: ${fireProbabilityMap[currentFloor]?.[key] ?? 0}`;
+  }
+
   tooltip.innerHTML=text;
   tooltip.style.left=e.clientX+10+"px";
   tooltip.style.top=e.clientY+10+"px";
@@ -414,6 +482,12 @@ function fetchAll(){
   fetch("/api/active_tasks")
   .then(r => r.json())
   .then(d => activeTasks = d);
+  fetch("/api/fire_probability_map")
+  .then(r => r.json())
+  .then(d => fireProbabilityMap = d);
+  fetch("/api/fire_weight_map")
+  .then(r => r.json())
+  .then(d => fireWeightMap = d);
 
   draw();
 }

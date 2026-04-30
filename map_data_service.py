@@ -36,6 +36,7 @@ class MapDataService:
         self.smoke_density = {}
         self.cell_weight = {}
         self.probability_map = {}
+        self.fire_probability_map = {}
         self.entrances = {}
         self.global_time = 0.0
         self.visibility_map = {}
@@ -61,6 +62,10 @@ class MapDataService:
         t = threading.Thread(target=self.web_server, daemon=True)
         t.start()
         logger.info("Started Map Web Server Thread.")
+
+        if os.getenv('FIRE_EVACUATION_DISABLE_INIT_FIRE') == "0":
+            logger.info("Reset fire before runtime init.")
+            self.reset_fire_at_startup()
 
         logger.info("Starting init runtime data.")
         self.init_runtime_data()
@@ -214,6 +219,106 @@ class MapDataService:
     def _close_record(self):
         if self.record_fp:
             self.record_fp.close()
+
+    def reset_fire_at_startup(self):
+        """
+        启动前：
+        1. 删除所有 fire_origin
+        2. 初始化 fire_probability_map
+        3. 按概率生成一个火源
+        """
+
+        floors = self.map_obj.get_data()
+        if not floors:
+            return
+
+        # ===== 1. 删除所有 fire_origin =====
+        for floor in floors:
+            points = floor.get("points", [])
+            floor["points"] = [p for p in points if p.get("type") != "fire_origin"]
+
+        # ===== 2. 初始化概率图 =====
+        self.fire_probability_map.clear()
+
+        for floor in floors:
+            fname = floor.get("name")
+            points = floor.get("points", [])
+
+            self.fire_probability_map[fname] = {}
+
+            # 构建 point_map
+            point_map = {(p["x"], p["y"]): p for p in points}
+
+            if not points:
+                continue
+
+            xs = [p["x"] for p in points]
+            ys = [p["y"] for p in points]
+
+            valid_cells = []
+
+            for y in range(min(ys), max(ys)+1):
+                for x in range(min(xs), max(xs)+1):
+                    key = f"{x},{y}"
+
+                    if (x, y) in point_map:
+                        t = point_map[(x, y)].get("type")
+                        if t in ("wall", "stair"):
+                            continue
+
+                    valid_cells.append((x, y))
+
+            if not valid_cells:
+                continue
+
+            # ===== 用 fire_weight（重点优化点）=====
+            weights = []
+            for (x, y) in valid_cells:
+                fw = 0
+                if (x, y) in point_map:
+                    fw = point_map[(x, y)].get("fire_weight", 0)
+
+                weights.append(max(fw, 0.0))
+
+            total = sum(weights)
+
+            if total <= 0:
+                weights = [1.0 for _ in valid_cells]
+                total = len(valid_cells)
+
+            # ===== 写入概率图（归一化）=====
+            for i, (x, y) in enumerate(valid_cells):
+                key = f"{x},{y}"
+                self.fire_probability_map[fname][key] = weights[i] / total
+
+            # ===== 3. 随机选火源 =====
+            chosen = random.choices(valid_cells, weights=weights, k=1)[0]
+
+            floor["points"].append({
+                "x": chosen[0],
+                "y": chosen[1],
+                "type": "fire_origin"
+            })
+
+        logger.info("Fire reset + respawn at startup done.")
+
+    def get_fire_weight_map(self):
+        result = {}
+
+        floors = self.map_obj.get_data() or []
+
+        for floor in floors:
+            fname = floor.get("name")
+            result[fname] = {}
+
+            for p in floor.get("points", []):
+                x, y = p["x"], p["y"]
+                key = f"{x},{y}"
+
+                fw = p.get("fire_weight", 0)
+                result[fname][key] = fw
+
+        return result
 
     # ================= A* =================
 
@@ -540,6 +645,14 @@ class MapDataService:
         @app.route("/api/active_tasks")
         def api_active_tasks():
             return jsonify(self.active_tasks)
+        
+        @app.route("/api/fire_probability_map")
+        def api_fire_probability_map():
+            return jsonify(self.fire_probability_map)
+        
+        @app.route("/api/fire_weight_map")
+        def api_fire_weight_map():
+            return jsonify(self.get_fire_weight_map())
 
         logger.info(f"Map Runtime Server http://{HTTP_ADDR}:{HTTP_PORT}")
         app.run(HTTP_ADDR, HTTP_PORT)

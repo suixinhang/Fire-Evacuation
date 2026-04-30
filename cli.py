@@ -53,6 +53,7 @@ def replay(map_id, record_id, http_addr, http_port):
 @click.option('--debug', is_flag=True, help="Debug")
 @click.option('--no-record', is_flag=True, help="Record")
 @click.option('--dis-prob', is_flag=True, help="Disable init probability")
+@click.option('--dis-init_fire', is_flag=True, help="Disable init fire")
 @click.option('--random-occupant', help="Random Occupants", type = int, default = 0)
 @click.option('--map-id', help="Use which map?", type = str)
 @click.option('--use-old-fire-simulation', help="Use exist fire simulation record", default = "", type = str)
@@ -60,13 +61,14 @@ def replay(map_id, record_id, http_addr, http_port):
 @click.option('--http-port', help="HTTP Server Port", default = 8000, type = int)
 @click.option('--speed', help="Simulation speed multiplier", default = 1.0, type = float)
 @click.option('--move-after', help="Move after what secound?", default = 0, type = int)
-def algorithm_simulation(debug, no_record, dis_prob, random_occupant, map_id, use_old_fire_simulation, http_addr, http_port, speed, move_after):
+def algorithm_simulation(debug, no_record, dis_prob, dis_init_fire, random_occupant, map_id, use_old_fire_simulation, http_addr, http_port, speed, move_after):
     """
     Algorithm Simulation
     """
     os.environ["FIRE_EVACUATION_DISABLE_INIT_PROBABILITY"] = '1' if dis_prob else '0'
     os.environ["FIRE_EVACUATION_DEBUG"] = '1' if debug else '0'
     os.environ["FIRE_EVACUATION_NO_RECORD"] = '1' if no_record else '0'
+    os.environ["FIRE_EVACUATION_DISABLE_INIT_FIRE"] = '1' if dis_init_fire else '0'
     if not map_id:
         raise ValueError("No provided good map id!")
         exit(-1)
