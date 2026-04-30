@@ -235,7 +235,7 @@ class MapDataService:
         # ===== 1. 删除所有 fire_origin =====
         for floor in floors:
             points = floor.get("points", [])
-            floor["points"] = [p for p in points if p.get("type") != "fire_origin"]
+            floor["points"] = points
 
         # ===== 2. 初始化概率图 =====
         self.fire_probability_map.clear()
