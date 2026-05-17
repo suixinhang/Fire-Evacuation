@@ -445,6 +445,7 @@ canvas.addEventListener("mousemove",e=>{
 
   if(viewMode==="fire_probability"){
     text += `<br>Fire P: ${fireProbabilityMap[currentFloor]?.[key] ?? 0}`;
+    text += `<br>Weight: ${fireWeightMap[currentFloor]?.[key] ?? 0}`;
   }
 
   tooltip.innerHTML=text;
