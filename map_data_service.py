@@ -223,19 +223,21 @@ class MapDataService:
     def reset_fire_at_startup(self):
         """
         启动前：
-        1. 删除所有 fire_origin
+        1. 移除所有 fire_origin 的标记，但保留其对象引用以防止权重丢失
         2. 初始化 fire_probability_map
-        3. 按概率生成一个火源
+        3. 按概率生成一个火源（更新原有节点，确保属性完整）
         """
 
         floors = self.map_obj.get_data()
         if not floors:
             return
 
-        # ===== 1. 删除所有 fire_origin =====
+        # ===== 1. 取消所有 fire_origin 状态，但保留属性 =====
+        # 修复：不再把整个对象从列表中过滤掉，而是把 type 置空，这样就能保留原有的 fire_weight
         for floor in floors:
-            points = floor.get("points", [])
-            floor["points"] = [p for p in points if p.get("type") != "fire_origin"]
+            for p in floor.get("points", []):
+                if p.get("type") == "fire_origin":
+                    p["type"] = None 
 
         # ===== 2. 初始化概率图 =====
         self.fire_probability_map.clear()
@@ -246,7 +248,7 @@ class MapDataService:
 
             self.fire_probability_map[fname] = {}
 
-            # 构建 point_map
+            # 构建 point_map (引用原字典，修改 point_map 里的值即修改 points)
             point_map = {(p["x"], p["y"]): p for p in points}
 
             if not points:
@@ -271,7 +273,7 @@ class MapDataService:
             if not valid_cells:
                 continue
 
-            # ===== 用 fire_weight（重点优化点）=====
+            # ===== 用 fire_weight =====
             weights = []
             for (x, y) in valid_cells:
                 fw = 0
@@ -293,12 +295,21 @@ class MapDataService:
 
             # ===== 3. 随机选火源 =====
             chosen = random.choices(valid_cells, weights=weights, k=1)[0]
+            cx, cy = chosen[0], chosen[1]
 
-            floor["points"].append({
-                "x": chosen[0],
-                "y": chosen[1],
-                "type": "fire_origin"
-            })
+            # 修复：查找是否已有该点。如果有则直接修改（保留原有 weight），并补全 color；否则新增
+            if (cx, cy) in point_map:
+                point_map[(cx, cy)]["type"] = "fire_origin"
+                point_map[(cx, cy)]["color"] = "#ffb6c1"  # 提供正确的颜色，防止前端渲染为黑色
+            else:
+                floor["points"].append({
+                    "x": cx,
+                    "y": cy,
+                    "type": "fire_origin",
+                    "color": "#ffb6c1",
+                    "weight": 0,
+                    "fire_weight": 0
+                })
 
         logger.info("Fire reset + respawn at startup done.")
 
