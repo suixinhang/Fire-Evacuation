@@ -68,7 +68,7 @@ target_dt = dt
 last_positions = {}
 
 # 全局任务锁：记录搜救者当前的状态和目标
-# 格式: { rid: {"type": "explore" 或 "rescue", "target": (tx, ty), "resume": (x, y) 或 None} }
+# 格式: { rid: {"type": "explore"/"rescue"/"exit", "target": (tx, ty), "resume": (x, y) 或 None} }
 active_tasks = {}
 
 # ===== occupants =====
@@ -136,6 +136,10 @@ def build_candidates(regions):
     for comp, boundary in regions:
         area = len(comp)
         for (x, y) in boundary:
+            # 二次校验：确保候选点确实是 unwatched（动态过滤已探索区域）
+            key = f"{x},{y}"
+            if MapDataServiceObj.block_status[floor_name].get(key) != "unwatched":
+                continue
             candidates.append((x, y, area))
     return candidates
 
@@ -165,61 +169,94 @@ while True:
 
         current_real_occupants = get_occupants_set()
 
-        # ===== 3. 抢占机制：支持“救更近的”，但增加判定阈值防止抖动 =====
+        # ----- 取消已经过时的探索任务（目标区域已被探索）-----
+        for rid in list(active_tasks.keys()):
+            task = active_tasks[rid]
+            if task["type"] == "explore":
+                tx, ty = task["target"]
+                if MapDataServiceObj.block_status[floor_name].get(f"{tx},{ty}") != "unwatched":
+                    active_tasks.pop(rid)
+
+        # ===== 3. 抢占机制：互斥锁防止多人争抢同一幸存者 =====
+        # 收集所有已被锁定的救援目标
+        all_rescue_targets = set()
+        for task in active_tasks.values():
+            if task["type"] == "rescue":
+                all_rescue_targets.add(f"{task['target'][0]},{task['target'][1]}")
+
         for rid, (rx, ry) in responders:
             current_task = active_tasks.get(rid)
             all_known_occs = get_occupants_set()
-            
-            # 获取所有已知且存在的幸存者，并计算 A* 距离
+
+            # 当前搜救者自己的救援目标，允许保留
+            my_target_str = None
+            if current_task and current_task["type"] == "rescue":
+                my_target_str = f"{current_task['target'][0]},{current_task['target'][1]}"
+
+            # 获取所有已知且存在的幸存者，排除已被其他搜救者锁定的目标
             scored_occs = []
             for occ_key in all_known_occs:
                 if MapDataServiceObj.block_status[floor_name].get(occ_key) == "watched":
+                    if occ_key in all_rescue_targets and occ_key != my_target_str:
+                        continue
                     ox, oy = map(int, occ_key.split(","))
                     d = MapDataServiceObj.astar_distance(floor_name, (rx, ry), [(ox, oy)])
                     if d is not None:
                         scored_occs.append(((ox, oy), d))
-            
+
             if not scored_occs:
+                # 没有可用幸存者 → 释放旧救援任务，回退到探索
+                if current_task and current_task["type"] == "rescue":
+                    resume_tgt = current_task.get("resume")
+                    if resume_tgt:
+                        # 先校验 resume 目标是否仍然 unwatched
+                        rx_tgt, ry_tgt = resume_tgt
+                        if MapDataServiceObj.block_status[floor_name].get(f"{rx_tgt},{ry_tgt}") == "unwatched":
+                            active_tasks[rid] = {
+                                "type": "explore",
+                                "target": resume_tgt,
+                                "resume": None
+                            }
+                        else:
+                            active_tasks.pop(rid)
+                    else:
+                        active_tasks.pop(rid)
                 continue
 
-            # 按距离排序，找到当前物理路径上最近的
+            # 按距离排序
             scored_occs.sort(key=lambda x: x[1])
             best_pos, best_dist = scored_occs[0]
 
-            # --- 核心改进：决策逻辑 ---
+            # --- 决策逻辑（含互斥锁更新）---
             if current_task and current_task["type"] == "rescue":
                 curr_target = current_task["target"]
                 target_pos_str = f"{curr_target[0]},{curr_target[1]}"
-                
-                # 如果当前锁定的目标已经消失了，直接换最近的
+
                 if target_pos_str not in all_known_occs:
+                    all_rescue_targets.discard(target_pos_str)
                     active_tasks[rid]["target"] = best_pos
+                    all_rescue_targets.add(f"{best_pos[0]},{best_pos[1]}")
                 else:
-                    # 计算当前目标的实时 A* 距离
                     curr_dist = MapDataServiceObj.astar_distance(floor_name, (rx, ry), [curr_target])
-    
-                    if curr_dist is not None and best_dist < curr_dist :
-                        # 只有显著更近，才抢占
+
+                    if curr_dist is not None and best_dist < curr_dist:
+                        all_rescue_targets.discard(target_pos_str)
                         active_tasks[rid]["target"] = best_pos
-                    else:
-                        # 否则，继续坚持当前目标
-                        pass
+                        all_rescue_targets.add(f"{best_pos[0]},{best_pos[1]}")
             else:
-                # 如果之前是 explore 或没任务，直接锁定最近的 rescue 任务
                 resume_tgt = current_task["target"] if (current_task and current_task["type"] == "explore") else None
                 active_tasks[rid] = {
                     "type": "rescue",
                     "target": best_pos,
                     "resume": resume_tgt
                 }
+                all_rescue_targets.add(f"{best_pos[0]},{best_pos[1]}")
 
-        # ===== 4. 任务分配（m-1 循环）=====
-        # 找出所有空闲（不在 active_tasks 里）的搜救者
+        # ===== 4. 探索任务分配（m-1 循环）=====
         free_responders = [rid for rid, pos in responders if rid not in active_tasks]
         assigned_targets = set([task["target"] for task in active_tasks.values()])
 
         while free_responders:
-            # 【关键修改】每次分配一个人后，重新计算未检索区域的面积，因为上一轮可能标记了 uncertain
             regions = compute_regions()
             candidates = build_candidates(regions)
 
@@ -254,8 +291,7 @@ while True:
                 break
 
             rid, (tx, ty) = best
-            
-            # 分配任务，进入锁定状态
+
             active_tasks[rid] = {
                 "type": "explore",
                 "target": (tx, ty),
@@ -263,103 +299,176 @@ while True:
             }
             assigned_targets.add((tx, ty))
 
-            # 预测视野并标记为 uncertain，影响下一次 compute_regions 的计算
             vis_area = len(vis_map.get(rid, []))
             radius = max(1, int(math.sqrt(vis_area / math.pi)))
             mark_uncertain_circle((tx, ty), radius)
 
-            # 剔除该搜救者，下一轮在 m-1 个空闲中再次分配
             free_responders.remove(rid)
 
+        # ===== 5. 全部救出后 → 全体寻找最近的出口撤离 =====
+        all_occupants_now = get_occupants_set()
+        exits = MapDataServiceObj.entrances.get(floor_name, [])
 
-        # ===== 5. 移动（严格使用你的防抖算法）=====
-        for rid, (rx, ry) in responders:
-            # 如果既没有探查任务，也没发现幸存者，原地待命
-            if rid not in active_tasks:
-                continue
-                
-            task = active_tasks[rid]
-            tx, ty = task["target"]
+        if not all_occupants_now and exits:
+            # 检查是否还有 unwatched 区域（如果有，继续探索可能会发现新的幸存者）
+            has_unwatched = any(
+                s == "unwatched"
+                for s in MapDataServiceObj.block_status[floor_name].values()
+            )
 
-            # --- 到达逻辑 ---
-            if (rx, ry) == (tx, ty):
-                if task["type"] == "rescue":
-                    # “到达救援者那里之后救援者就算是被救助了”
-                    for floor in MapDataServiceObj.map_obj.get_data():
-                        if floor["name"] == floor_name:
-                            floor["points"] = [p for p in floor["points"] 
-                                            if not (p.get("type") == "occupant" and p["x"] == tx and p["y"] == ty)]
-                    
-                    # “接着回到锁定状态，继续刚刚未完成的任务”
-                    if task["resume"]:
+            if not has_unwatched:
+                # 没有幸存者也没有未探索区域 → 全体撤离
+                for rid, (rx, ry) in responders:
+                    # 如果已经在出口任务中，跳过
+                    current_task = active_tasks.get(rid)
+                    if current_task and current_task["type"] == "exit":
+                        continue
+
+                    # 找最近的出口
+                    best_exit = None
+                    best_exit_dist = float("inf")
+                    for ex, ey in exits:
+                        d = MapDataServiceObj.astar_distance(floor_name, (rx, ry), [(ex, ey)])
+                        if d is not None and d < best_exit_dist:
+                            best_exit_dist = d
+                            best_exit = (ex, ey)
+
+                    if best_exit:
                         active_tasks[rid] = {
-                            "type": "explore",
-                            "target": task["resume"],
+                            "type": "exit",
+                            "target": best_exit,
                             "resume": None
                         }
-                    else:
-                        active_tasks.pop(rid)
-                else:
-                    # 探索任务到达，完成
-                    active_tasks.pop(rid)
-                continue
 
-            # --- 原汁原味的防抖移动 ---
+        # ===== 6. 移动 =====
+        # 构建当前占用集合（防止重叠）
+        occupied = {pos for rid, pos in responders}
+        # 追踪本轮已经移动的（防止交换位置）
+        moved_this_step = {}
+
+        for rid, (rx, ry) in responders:
             if rid not in active_tasks:
                 continue
-                
+
             task = active_tasks[rid]
             tx, ty = task["target"]
 
             # --- 到达逻辑 ---
             if (rx, ry) == (tx, ty):
-                # ... 这里保留你之前的救人成功/任务恢复逻辑 ...
                 if task["type"] == "rescue":
+                    # 救出幸存者
                     for floor in MapDataServiceObj.map_obj.get_data():
                         if floor["name"] == floor_name:
-                            floor["points"] = [p for p in floor["points"] 
+                            floor["points"] = [p for p in floor["points"]
                                             if not (p.get("type") == "occupant" and p["x"] == tx and p["y"] == ty)]
+
                     if task["resume"]:
-                        active_tasks[rid] = {"type": "explore", "target": task["resume"], "resume": None}
+                        rx_tgt, ry_tgt = task["resume"]
+                        if MapDataServiceObj.block_status[floor_name].get(f"{rx_tgt},{ry_tgt}") == "unwatched":
+                            active_tasks[rid] = {
+                                "type": "explore",
+                                "target": task["resume"],
+                                "resume": None
+                            }
+                        else:
+                            active_tasks.pop(rid)
                     else:
                         active_tasks.pop(rid)
-                else:
+
+                elif task["type"] == "exit":
+                    # 到达出口，停在出口位置
                     active_tasks.pop(rid)
+                    # 不移除responder，停在出口
+                    occupied.add((tx, ty))
+
+                else:
+                    # 探索任务到达，检查目标是否仍然有效
+                    if MapDataServiceObj.block_status[floor_name].get(f"{tx},{ty}") == "unwatched":
+                        # 目标有效，完成探索任务
+                        active_tasks.pop(rid)
+                    else:
+                        # 目标已过时，取消任务
+                        active_tasks.pop(rid)
                 continue
 
-            # --- 核心修复：探测邻居的 A* 成本 ---
+            # --- A* 邻居选择 ---
             best_next = None
             min_astar_dist = float("inf")
+            alternatives = []
 
-            # 遍历上下左右
             for dx, dy in [(1,0),(-1,0),(0,1),(0,-1)]:
                 nx, ny = rx + dx, ry + dy
                 nk = f"{nx},{ny}"
 
-                # 基础有效性检查
                 if nk not in MapDataServiceObj.block_status[floor_name]: continue
-                if MapDataServiceObj.block_status[floor_name][nk] == "null": continue
 
-                # 调用你已有的 astar_distance
-                # 测量“如果我走到了 (nx, ny)，我距离目标还有多远？”
+                is_entrance = (nx, ny) in exits
+
+                # 出口/入口格子对 exit 任务放行，普通格子跳过 null
+                if not (is_entrance and task["type"] == "exit"):
+                    if MapDataServiceObj.block_status[floor_name][nk] == "null": continue
+
+                # 碰撞检测：跳过已被其他搜救者占据的格子
+                # 出口格子允许多人重合；已移走的占据者可以进入
+                if (nx, ny) in occupied:
+                    if is_entrance:
+                        # 出口允许多人
+                        pass
+                    else:
+                        # 检查占据者是否本轮已经移走
+                        occupier_rid = None
+                        for o_rid, o_pos in responders:
+                            if o_pos == (nx, ny) and o_rid != rid:
+                                occupier_rid = o_rid
+                                break
+                        if occupier_rid and occupier_rid in moved_this_step:
+                            pass
+                        else:
+                            continue
+
                 d = MapDataServiceObj.astar_distance(
                     floor_name,
                     (nx, ny),
                     [(tx, ty)]
                 )
 
-                if d is not None and d < min_astar_dist:
-                    min_astar_dist = d
-                    best_next = (nx, ny)
+                if d is not None:
+                    alternatives.append(((nx, ny), d))
+                    if d < min_astar_dist:
+                        min_astar_dist = d
+                        best_next = (nx, ny)
 
             if best_next:
-                # 移动到 A* 距离缩短最明显的那个邻居
+                # 移除旧位置占用，添加新位置占用
+                occupied.discard((rx, ry))
+                occupied.add(best_next)
                 MapDataServiceObj.responders[floor_name][rid] = best_next
-                # 更新 last_positions 仅用于记录，不参与逻辑干扰
+                moved_this_step[rid] = best_next
+                last_positions[rid] = (rx, ry)
+            elif alternatives:
+                # 所有路径都被占据，选代价最低的那个（不会阻塞）
+                alternatives.sort(key=lambda x: x[1])
+                fallback = alternatives[0][0]
+                occupied.discard((rx, ry))
+                occupied.add(fallback)
+                MapDataServiceObj.responders[floor_name][rid] = fallback
+                moved_this_step[rid] = fallback
                 last_positions[rid] = (rx, ry)
             else:
-                # 如果四个方向都没有 A* 路径，说明目标真的不可达（被火封死等）
-                active_tasks.pop(rid, None)
+                # 无路可走，目标不可达
+                if task["type"] == "exit":
+                    # 出口不可达，尝试其他出口
+                    other_exits = [e for e in exits if e != (tx, ty)]
+                    if other_exits:
+                        best_alt = min(
+                            other_exits,
+                            key=lambda e: MapDataServiceObj.astar_distance(floor_name, (rx, ry), [e]) or float("inf")
+                        )
+                        active_tasks[rid]["target"] = best_alt
+                    else:
+                        active_tasks.pop(rid, None)
+                else:
+                    active_tasks.pop(rid, None)
 
     step_counter += 1
 
