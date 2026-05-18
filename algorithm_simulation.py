@@ -88,15 +88,34 @@ def clear_uncertain():
         if MapDataServiceObj.block_status[floor_name][k] == "uncertain":
             MapDataServiceObj.block_status[floor_name][k] = "unwatched"
 
+# 每个搜救者认领的 uncertain 区域（rid → set of cell keys）
+region_claims = {}
+
 # ===== 标记 uncertain =====
-def mark_uncertain_circle(center, radius):
+def mark_uncertain_circle(center, radius, rid):
     cx, cy = center
+    claimed = set()
     for key in MapDataServiceObj.block_status[floor_name]:
         if MapDataServiceObj.block_status[floor_name][key] != "unwatched":
             continue
         x, y = map(int, key.split(","))
         if (x - cx) ** 2 + (y - cy) ** 2 <= radius ** 2:
+            # 不标记目标中心本身，保持 unwatched 使任务有效
+            if (x, y) == (cx, cy):
+                claimed.add(key)
+                continue
             MapDataServiceObj.block_status[floor_name][key] = "uncertain"
+            claimed.add(key)
+    region_claims[rid] = claimed
+
+def release_claims(rid):
+    """释放某个搜救者的所有探索预留"""
+    if rid not in region_claims:
+        return
+    for key in region_claims[rid]:
+        if MapDataServiceObj.block_status[floor_name].get(key) == "uncertain":
+            MapDataServiceObj.block_status[floor_name][key] = "unwatched"
+    del region_claims[rid]
 
 # ===== 区域划分 =====
 def compute_regions():
@@ -151,15 +170,13 @@ while True:
 
         responders = MapDataServiceObj.get_responders(floor_name)
 
-        # ===== 1. 清理 uncertain =====
-        clear_uncertain()
-
-        # ===== 2. 视野更新 =====
+        # ===== 1. 视野更新 =====
         vis_map = MapDataServiceObj.compute_visibility_for_responders(
             floor_name,
             responders
         )
 
+        # 所有被视野覆盖的格子 → watched（包括 uncertain → watched）
         for rid, (rx, ry) in responders:
             MapDataServiceObj.block_status[floor_name][rid] = "watched"
 
@@ -167,14 +184,33 @@ while True:
             for key in visible:
                 MapDataServiceObj.block_status[floor_name][key] = "watched"
 
+        # 清理被 watched 覆盖后残留的 uncertain（仅清理已完成探索的区域）
+        # 不再全局清除 uncertain，让探索预留标记跨步持久化
+        for k in MapDataServiceObj.block_status[floor_name]:
+            if MapDataServiceObj.block_status[floor_name][k] == "uncertain":
+                # 如果附近 3 格内全部是 watched，则清理该 uncertain
+                x, y = map(int, k.split(","))
+                all_watched = True
+                for dx, dy in [(0,0),(1,0),(-1,0),(0,1),(0,-1),(1,1),(1,-1),(-1,1),(-1,-1)]:
+                    nk = f"{x+dx},{y+dy}"
+                    ns = MapDataServiceObj.block_status[floor_name].get(nk)
+                    if ns and ns not in ("watched", "null"):
+                        all_watched = False
+                        break
+                if all_watched:
+                    MapDataServiceObj.block_status[floor_name][k] = "unwatched"
+
         current_real_occupants = get_occupants_set()
 
         # ----- 取消已经过时的探索任务（目标区域已被探索）-----
+        # 注意：uncertain 表示被其他搜救者预留，不算过时；只有 watched/null 才取消
         for rid in list(active_tasks.keys()):
             task = active_tasks[rid]
             if task["type"] == "explore":
                 tx, ty = task["target"]
-                if MapDataServiceObj.block_status[floor_name].get(f"{tx},{ty}") != "unwatched":
+                status = MapDataServiceObj.block_status[floor_name].get(f"{tx},{ty}")
+                if status not in ("unwatched", "uncertain"):
+                    release_claims(rid)
                     active_tasks.pop(rid)
 
         # ===== 3. 抢占机制：互斥锁防止多人争抢同一幸存者 =====
@@ -205,21 +241,24 @@ while True:
                         scored_occs.append(((ox, oy), d))
 
             if not scored_occs:
-                # 没有可用幸存者 → 释放旧救援任务，回退到探索
+                # 没有可用幸存者 → 释放旧救援任务，释放探索预留，回退到探索
                 if current_task and current_task["type"] == "rescue":
                     resume_tgt = current_task.get("resume")
                     if resume_tgt:
-                        # 先校验 resume 目标是否仍然 unwatched
+                        # 先校验 resume 目标是否仍然 unwatched/uncertain
                         rx_tgt, ry_tgt = resume_tgt
-                        if MapDataServiceObj.block_status[floor_name].get(f"{rx_tgt},{ry_tgt}") == "unwatched":
+                        status = MapDataServiceObj.block_status[floor_name].get(f"{rx_tgt},{ry_tgt}")
+                        if status in ("unwatched", "uncertain"):
                             active_tasks[rid] = {
                                 "type": "explore",
                                 "target": resume_tgt,
                                 "resume": None
                             }
                         else:
+                            release_claims(rid)
                             active_tasks.pop(rid)
                     else:
+                        release_claims(rid)
                         active_tasks.pop(rid)
                 continue
 
@@ -301,7 +340,7 @@ while True:
 
             vis_area = len(vis_map.get(rid, []))
             radius = max(1, int(math.sqrt(vis_area / math.pi)))
-            mark_uncertain_circle((tx, ty), radius)
+            mark_uncertain_circle((tx, ty), radius, rid)
 
             free_responders.remove(rid)
 
@@ -334,6 +373,7 @@ while True:
                             best_exit = (ex, ey)
 
                     if best_exit:
+                        release_claims(rid)
                         active_tasks[rid] = {
                             "type": "exit",
                             "target": best_exit,
@@ -364,26 +404,32 @@ while True:
 
                     if task["resume"]:
                         rx_tgt, ry_tgt = task["resume"]
-                        if MapDataServiceObj.block_status[floor_name].get(f"{rx_tgt},{ry_tgt}") == "unwatched":
+                        status = MapDataServiceObj.block_status[floor_name].get(f"{rx_tgt},{ry_tgt}")
+                        if status in ("unwatched", "uncertain"):
                             active_tasks[rid] = {
                                 "type": "explore",
                                 "target": task["resume"],
                                 "resume": None
                             }
                         else:
+                            release_claims(rid)
                             active_tasks.pop(rid)
                     else:
+                        release_claims(rid)
                         active_tasks.pop(rid)
 
                 elif task["type"] == "exit":
                     # 到达出口，停在出口位置
                     active_tasks.pop(rid)
+                    release_claims(rid)
                     # 不移除responder，停在出口
                     occupied.add((tx, ty))
 
                 else:
-                    # 探索任务到达，检查目标是否仍然有效
-                    if MapDataServiceObj.block_status[floor_name].get(f"{tx},{ty}") == "unwatched":
+                    # 探索任务到达，释放预留，检查目标是否仍然有效
+                    release_claims(rid)
+                    status = MapDataServiceObj.block_status[floor_name].get(f"{tx},{ty}")
+                    if status in ("unwatched", "uncertain"):
                         # 目标有效，完成探索任务
                         active_tasks.pop(rid)
                     else:
@@ -466,8 +512,10 @@ while True:
                         )
                         active_tasks[rid]["target"] = best_alt
                     else:
+                        release_claims(rid)
                         active_tasks.pop(rid, None)
                 else:
+                    release_claims(rid)
                     active_tasks.pop(rid, None)
 
     step_counter += 1
