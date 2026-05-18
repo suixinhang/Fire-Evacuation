@@ -312,7 +312,7 @@ while True:
         if not all_occupants_now and exits:
             # 检查是否还有 unwatched 区域（如果有，继续探索可能会发现新的幸存者）
             has_unwatched = any(
-                s == "unwatched"
+                s in ("unwatched", "uncertain")
                 for s in MapDataServiceObj.block_status[floor_name].values()
             )
 
