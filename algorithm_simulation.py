@@ -162,6 +162,94 @@ def build_candidates(regions):
             candidates.append((x, y, area))
     return candidates
 
+# ===== 匈牙利算法：全局最优任务分配 =====
+INF_COST = 1e12
+
+def hungarian_assignment(cost):
+    """
+    解决指派问题：将 n 个工人分配给 m 个任务 (n <= m)，最小化总代价。
+    cost: n x m 矩阵，cost[i][j] = 工人i完成任务j的代价。
+          不可行的分配使用 INF_COST 表示。
+    返回: [(worker_idx, job_idx), ...] 最优分配列表。
+    算法: O(n^2 * m) 匈牙利算法（Kuhn-Munkres）。
+    """
+    n = len(cost)
+    if n == 0:
+        return []
+    m = len(cost[0]) if cost else 0
+    if m == 0:
+        return []
+
+    size = max(n, m)
+    # 构建 size x size 方阵
+    a = []
+    for i in range(size):
+        row = []
+        for j in range(size):
+            if i < n and j < m:
+                val = cost[i][j]
+                if val >= INF_COST * 0.5:
+                    val = INF_COST
+            elif i >= n:
+                val = 0.0  # 虚拟工人，代价为0（允许部分工人不分配）
+            else:
+                val = INF_COST  # 虚拟任务，不可达
+            row.append(val)
+        a.append(row)
+
+    # 标准匈牙利算法 O(size^3)
+    u = [0.0] * (size + 1)
+    v = [0.0] * (size + 1)
+    p = [0] * (size + 1)
+    way = [0] * (size + 1)
+
+    for i in range(1, size + 1):
+        p[0] = i
+        j0 = 0
+        minv = [INF_COST] * (size + 1)
+        used = [False] * (size + 1)
+        while True:
+            used[j0] = True
+            i0 = p[j0]
+            delta = INF_COST
+            j1 = 0
+            for j in range(1, size + 1):
+                if not used[j]:
+                    cur = a[i0 - 1][j - 1] - u[i0] - v[j]
+                    if cur < minv[j]:
+                        minv[j] = cur
+                        way[j] = j0
+                    if minv[j] < delta:
+                        delta = minv[j]
+                        j1 = j
+            for j in range(size + 1):
+                if used[j]:
+                    u[p[j]] += delta
+                    v[j] -= delta
+                else:
+                    minv[j] -= delta
+            j0 = j1
+            if p[j0] == 0:
+                break
+        while True:
+            j1 = way[j0]
+            p[j0] = p[j1]
+            j0 = j1
+            if j0 == 0:
+                break
+
+    # 提取分配
+    assignment = []
+    for j in range(1, size + 1):
+        worker = p[j]
+        if worker != 0 and worker <= n and j <= m:
+            wi = worker - 1
+            ji = j - 1
+            if cost[wi][ji] < INF_COST * 0.5:
+                assignment.append((wi, ji))
+
+    return assignment
+
 # ================= 主循环 =================
 while True:
     start_time = time.time()
@@ -213,39 +301,111 @@ while True:
                     release_claims(rid)
                     active_tasks.pop(rid)
 
-        # ===== 3. 抢占机制：互斥锁防止多人争抢同一幸存者 =====
-        # 收集所有已被锁定的救援目标
-        all_rescue_targets = set()
-        for task in active_tasks.values():
-            if task["type"] == "rescue":
-                all_rescue_targets.add(f"{task['target'][0]},{task['target'][1]}")
+        # ===== 3. 全局最优救援任务分配（匈牙利算法）=====
+        # 收集所有救援者及其位置
+        all_responders_dict = {rid: (rx, ry) for rid, (rx, ry) in responders}
+        responder_keys = list(all_responders_dict.keys())
 
-        for rid, (rx, ry) in responders:
-            current_task = active_tasks.get(rid)
-            all_known_occs = get_occupants_set()
+        # 收集所有已知且可见的幸存者位置
+        all_known_occs = get_occupants_set()
+        available_occs = []
+        for occ_key in all_known_occs:
+            if MapDataServiceObj.block_status[floor_name].get(occ_key) == "watched":
+                ox, oy = map(int, occ_key.split(","))
+                available_occs.append((ox, oy))
 
-            # 当前搜救者自己的救援目标，允许保留
-            my_target_str = None
-            if current_task and current_task["type"] == "rescue":
-                my_target_str = f"{current_task['target'][0]},{current_task['target'][1]}"
-
-            # 获取所有已知且存在的幸存者，排除已被其他搜救者锁定的目标
-            scored_occs = []
-            for occ_key in all_known_occs:
-                if MapDataServiceObj.block_status[floor_name].get(occ_key) == "watched":
-                    if occ_key in all_rescue_targets and occ_key != my_target_str:
-                        continue
-                    ox, oy = map(int, occ_key.split(","))
+        if available_occs and responder_keys:
+            # === 构建代价矩阵 ===
+            cost_matrix = []
+            for rid in responder_keys:
+                rx, ry = all_responders_dict[rid]
+                row = []
+                for (ox, oy) in available_occs:
                     d = MapDataServiceObj.astar_distance(floor_name, (rx, ry), [(ox, oy)])
-                    if d is not None:
-                        scored_occs.append(((ox, oy), d))
+                    row.append(d if d is not None else INF_COST)
+                cost_matrix.append(row)
 
-            if not scored_occs:
-                # 没有可用幸存者 → 释放旧救援任务，释放探索预留，回退到探索
-                if current_task and current_task["type"] == "rescue":
-                    resume_tgt = current_task.get("resume")
+            # === 计算当前分配的总代价 ===
+            current_total = 0.0
+            current_valid = True
+            for ri, rid in enumerate(responder_keys):
+                task = active_tasks.get(rid)
+                if task and task["type"] == "rescue":
+                    tx, ty = task["target"]
+                    try:
+                        oi = available_occs.index((tx, ty))
+                        if cost_matrix[ri][oi] < INF_COST * 0.5:
+                            current_total += cost_matrix[ri][oi]
+                        else:
+                            current_valid = False
+                    except ValueError:
+                        current_valid = False
+                else:
+                    current_valid = False
+
+            # === 匈牙利算法求全局最优 ===
+            optimal_assignments = hungarian_assignment(cost_matrix)
+            optimal_total = sum(
+                cost_matrix[ri][oi] for ri, oi in optimal_assignments
+                if cost_matrix[ri][oi] < INF_COST * 0.5
+            )
+
+            # === 仅当全局最优优于当前分配时才重新分配 ===
+            if not current_valid or optimal_total < current_total - 1e-9:
+                # 构建新的最优分配映射 rid -> (ox, oy)
+                new_occ_for_responder = {}
+                for ri, oi in optimal_assignments:
+                    if cost_matrix[ri][oi] < INF_COST * 0.5:
+                        new_occ_for_responder[responder_keys[ri]] = available_occs[oi]
+
+                # 应用新分配
+                for rid in responder_keys:
+                    old_task = active_tasks.get(rid)
+
+                    if rid in new_occ_for_responder:
+                        ox, oy = new_occ_for_responder[rid]
+                        # 保存旧的探索目标作为 resume
+                        resume = None
+                        if old_task:
+                            if old_task["type"] == "rescue":
+                                resume = old_task.get("resume")
+                            elif old_task["type"] == "explore":
+                                resume = old_task["target"]
+                        active_tasks[rid] = {
+                            "type": "rescue",
+                            "target": (ox, oy),
+                            "resume": resume
+                        }
+                    else:
+                        # 该救援者没有被分配到幸存者 → 回退到探索
+                        if old_task and old_task["type"] == "rescue":
+                            resume_tgt = old_task.get("resume")
+                            if resume_tgt:
+                                rx_tgt, ry_tgt = resume_tgt
+                                status = MapDataServiceObj.block_status[floor_name].get(f"{rx_tgt},{ry_tgt}")
+                                if status in ("unwatched", "uncertain"):
+                                    active_tasks[rid] = {
+                                        "type": "explore",
+                                        "target": resume_tgt,
+                                        "resume": None
+                                    }
+                                else:
+                                    release_claims(rid)
+                                    active_tasks.pop(rid, None)
+                            else:
+                                release_claims(rid)
+                                active_tasks.pop(rid, None)
+                        elif old_task and old_task["type"] == "explore":
+                            pass  # 保持探索任务不变
+                        else:
+                            active_tasks.pop(rid, None)
+        else:
+            # 没有可用的幸存者 → 释放所有救援任务，回退到探索
+            for rid in list(active_tasks.keys()):
+                task = active_tasks[rid]
+                if task["type"] == "rescue":
+                    resume_tgt = task.get("resume")
                     if resume_tgt:
-                        # 先校验 resume 目标是否仍然 unwatched/uncertain
                         rx_tgt, ry_tgt = resume_tgt
                         status = MapDataServiceObj.block_status[floor_name].get(f"{rx_tgt},{ry_tgt}")
                         if status in ("unwatched", "uncertain"):
@@ -260,89 +420,50 @@ while True:
                     else:
                         release_claims(rid)
                         active_tasks.pop(rid)
-                continue
 
-            # 按距离排序
-            scored_occs.sort(key=lambda x: x[1])
-            best_pos, best_dist = scored_occs[0]
-
-            # --- 决策逻辑（含互斥锁更新）---
-            if current_task and current_task["type"] == "rescue":
-                curr_target = current_task["target"]
-                target_pos_str = f"{curr_target[0]},{curr_target[1]}"
-
-                if target_pos_str not in all_known_occs:
-                    all_rescue_targets.discard(target_pos_str)
-                    active_tasks[rid]["target"] = best_pos
-                    all_rescue_targets.add(f"{best_pos[0]},{best_pos[1]}")
-                else:
-                    curr_dist = MapDataServiceObj.astar_distance(floor_name, (rx, ry), [curr_target])
-
-                    if curr_dist is not None and best_dist < curr_dist:
-                        all_rescue_targets.discard(target_pos_str)
-                        active_tasks[rid]["target"] = best_pos
-                        all_rescue_targets.add(f"{best_pos[0]},{best_pos[1]}")
-            else:
-                resume_tgt = current_task["target"] if (current_task and current_task["type"] == "explore") else None
-                active_tasks[rid] = {
-                    "type": "rescue",
-                    "target": best_pos,
-                    "resume": resume_tgt
-                }
-                all_rescue_targets.add(f"{best_pos[0]},{best_pos[1]}")
-
-        # ===== 4. 探索任务分配（m-1 循环）=====
+        # ===== 4. 全局最优探索任务分配（匈牙利算法）=====
         free_responders = [rid for rid, pos in responders if rid not in active_tasks]
-        assigned_targets = set([task["target"] for task in active_tasks.values()])
 
-        while free_responders:
+        if free_responders:
             regions = compute_regions()
             candidates = build_candidates(regions)
 
-            if not candidates:
-                break
+            if candidates:
+                responders_dict = dict(responders)
 
-            best = None
-            best_score = float("inf")
+                # === 构建代价矩阵 ===
+                # 代价 = distance / area（越小越好）
+                cost_matrix = []
+                for rid in free_responders:
+                    rx, ry = responders_dict[rid]
+                    row = []
+                    for (tx, ty, area) in candidates:
+                        d = MapDataServiceObj.astar_distance(floor_name, (rx, ry), [(tx, ty)])
+                        if d is not None:
+                            row.append(d / (area + 1e-5))
+                        else:
+                            row.append(INF_COST)
+                    cost_matrix.append(row)
 
-            for rid in free_responders:
-                rx, ry = dict(responders)[rid]
-                for (tx, ty, area) in candidates:
-                    if (tx, ty) in assigned_targets:
+                # === 匈牙利算法求全局最优 ===
+                opt_assignments = hungarian_assignment(cost_matrix)
+
+                # === 应用分配 ===
+                for ri, ci in opt_assignments:
+                    if cost_matrix[ri][ci] >= INF_COST * 0.5:
                         continue
+                    rid = free_responders[ri]
+                    tx, ty, area = candidates[ci]
 
-                    d = MapDataServiceObj.astar_distance(
-                        floor_name,
-                        (rx, ry),
-                        [(tx, ty)]
-                    )
+                    active_tasks[rid] = {
+                        "type": "explore",
+                        "target": (tx, ty),
+                        "resume": None
+                    }
 
-                    if d is None:
-                        continue
-
-                    score = d / (area + 1e-5)
-
-                    if score < best_score:
-                        best_score = score
-                        best = (rid, (tx, ty))
-
-            if not best:
-                break
-
-            rid, (tx, ty) = best
-
-            active_tasks[rid] = {
-                "type": "explore",
-                "target": (tx, ty),
-                "resume": None
-            }
-            assigned_targets.add((tx, ty))
-
-            vis_area = len(vis_map.get(rid, []))
-            radius = max(1, int(math.sqrt(vis_area / math.pi)))
-            mark_uncertain_circle((tx, ty), radius, rid)
-
-            free_responders.remove(rid)
+                    vis_area = len(vis_map.get(rid, []))
+                    radius = max(1, int(math.sqrt(vis_area / math.pi)))
+                    mark_uncertain_circle((tx, ty), radius, rid)
 
         # ===== 5. 全部救出后 → 全体寻找最近的出口撤离 =====
         all_occupants_now = get_occupants_set()
