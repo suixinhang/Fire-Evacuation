@@ -301,8 +301,11 @@ while True:
                     release_claims(rid)
                     active_tasks.pop(rid)
 
-        # ===== 3. 全局最优救援任务分配（匈牙利算法）=====
-        # 收集所有救援者及其位置
+        # ===== 3. 贪心链式救援任务分配 =====
+        # 第一步：锁定 A* 距离最短的 (救援者, 幸存者) 对
+        # 后续步骤：贪心分配剩余幸存者，已分配的救援者可链式救援
+        #   增量代价 = 从最后一位幸存者到新幸存者的 A* 距离
+        #   未分配救援者的代价 = 直接 A* 距离
         all_responders_dict = {rid: (rx, ry) for rid, (rx, ry) in responders}
         responder_keys = list(all_responders_dict.keys())
 
@@ -315,90 +318,135 @@ while True:
                 available_occs.append((ox, oy))
 
         if available_occs and responder_keys:
-            # === 构建代价矩阵 ===
-            cost_matrix = []
-            for rid in responder_keys:
-                rx, ry = all_responders_dict[rid]
-                row = []
-                for (ox, oy) in available_occs:
+            n_rescuers = len(responder_keys)
+            n_occs = len(available_occs)
+
+            # 预计算所有救援者→幸存者距离
+            rescuer_occ_dist = {}
+            for ri in range(n_rescuers):
+                rx, ry = all_responders_dict[responder_keys[ri]]
+                for oi, (ox, oy) in enumerate(available_occs):
                     d = MapDataServiceObj.astar_distance(floor_name, (rx, ry), [(ox, oy)])
-                    row.append(d if d is not None else INF_COST)
-                cost_matrix.append(row)
+                    rescuer_occ_dist[(ri, oi)] = d if d is not None else INF_COST
 
-            # === 计算当前分配的总代价 ===
-            current_total = 0.0
-            current_valid = True
-            for ri, rid in enumerate(responder_keys):
-                task = active_tasks.get(rid)
-                if task and task["type"] == "rescue":
-                    tx, ty = task["target"]
-                    try:
-                        oi = available_occs.index((tx, ty))
-                        if cost_matrix[ri][oi] < INF_COST * 0.5:
-                            current_total += cost_matrix[ri][oi]
-                        else:
-                            current_valid = False
-                    except ValueError:
-                        current_valid = False
-                else:
-                    current_valid = False
-
-            # === 匈牙利算法求全局最优 ===
-            optimal_assignments = hungarian_assignment(cost_matrix)
-            optimal_total = sum(
-                cost_matrix[ri][oi] for ri, oi in optimal_assignments
-                if cost_matrix[ri][oi] < INF_COST * 0.5
-            )
-
-            # === 仅当全局最优优于当前分配时才重新分配 ===
-            if not current_valid or optimal_total < current_total - 1e-9:
-                # 构建新的最优分配映射 rid -> (ox, oy)
-                new_occ_for_responder = {}
-                for ri, oi in optimal_assignments:
-                    if cost_matrix[ri][oi] < INF_COST * 0.5:
-                        new_occ_for_responder[responder_keys[ri]] = available_occs[oi]
-
-                # 应用新分配
-                for rid in responder_keys:
-                    old_task = active_tasks.get(rid)
-
-                    if rid in new_occ_for_responder:
-                        ox, oy = new_occ_for_responder[rid]
-                        # 保存旧的探索目标作为 resume
-                        resume = None
-                        if old_task:
-                            if old_task["type"] == "rescue":
-                                resume = old_task.get("resume")
-                            elif old_task["type"] == "explore":
-                                resume = old_task["target"]
-                        active_tasks[rid] = {
-                            "type": "rescue",
-                            "target": (ox, oy),
-                            "resume": resume
-                        }
+            # 预计算所有幸存者→幸存者距离（用于链式救援的增量代价）
+            occ_occ_dist = {}
+            for oi in range(n_occs):
+                for oj in range(n_occs):
+                    if oi == oj:
+                        occ_occ_dist[(oi, oj)] = 0
+                    elif (oj, oi) in occ_occ_dist:
+                        occ_occ_dist[(oi, oj)] = occ_occ_dist[(oj, oi)]
                     else:
-                        # 该救援者没有被分配到幸存者 → 回退到探索
-                        if old_task and old_task["type"] == "rescue":
-                            resume_tgt = old_task.get("resume")
-                            if resume_tgt:
-                                rx_tgt, ry_tgt = resume_tgt
-                                status = MapDataServiceObj.block_status[floor_name].get(f"{rx_tgt},{ry_tgt}")
-                                if status in ("unwatched", "uncertain"):
-                                    active_tasks[rid] = {
-                                        "type": "explore",
-                                        "target": resume_tgt,
-                                        "resume": None
-                                    }
-                                else:
-                                    release_claims(rid)
-                                    active_tasks.pop(rid, None)
+                        ox, oy = available_occs[oi]
+                        ox2, oy2 = available_occs[oj]
+                        d = MapDataServiceObj.astar_distance(floor_name, (ox, oy), [(ox2, oy2)])
+                        occ_occ_dist[(oi, oj)] = d if d is not None else INF_COST
+
+            # 贪心序列分配
+            assigned_chain = {}  # rid -> [oi1, oi2, ...] （救援链，按顺序）
+            unassigned_occs = set(range(n_occs))
+
+            # 第一步：锁定全局 A* 距离最短的 (救援者, 幸存者) 对
+            best_cost = INF_COST
+            best_ri = None
+            best_oi = None
+            for ri in range(n_rescuers):
+                for oi in unassigned_occs:
+                    cost = rescuer_occ_dist.get((ri, oi), INF_COST)
+                    if cost < best_cost:
+                        best_cost = cost
+                        best_ri = ri
+                        best_oi = oi
+
+            if best_ri is not None and best_cost < INF_COST * 0.5:
+                rid = responder_keys[best_ri]
+                assigned_chain[rid] = [best_oi]
+                unassigned_occs.remove(best_oi)
+
+                # 后续步骤：贪心分配剩余幸存者
+                while unassigned_occs:
+                    best_cost = INF_COST
+                    best_rid = None
+                    best_oi = None
+
+                    for oi in unassigned_occs:
+                        # 已分配的救援者：增量代价 = 链末端幸存者 → 新幸存者
+                        for rid in assigned_chain:
+                            last_oi = assigned_chain[rid][-1]
+                            chain_cost = occ_occ_dist.get((last_oi, oi), INF_COST)
+                            if chain_cost < best_cost:
+                                best_cost = chain_cost
+                                best_rid = rid
+                                best_oi = oi
+
+                        # 未分配的救援者：直接 A* 距离
+                        for ri in range(n_rescuers):
+                            rid_candidate = responder_keys[ri]
+                            if rid_candidate in assigned_chain:
+                                continue
+                            cost = rescuer_occ_dist.get((ri, oi), INF_COST)
+                            if cost < best_cost:
+                                best_cost = cost
+                                best_rid = rid_candidate
+                                best_oi = oi
+
+                    if best_rid is None or best_cost >= INF_COST * 0.5:
+                        break
+
+                    if best_rid in assigned_chain:
+                        assigned_chain[best_rid].append(best_oi)
+                    else:
+                        assigned_chain[best_rid] = [best_oi]
+                    unassigned_occs.remove(best_oi)
+
+            # 应用分配结果到 active_tasks
+            for rid in responder_keys:
+                old_task = active_tasks.get(rid)
+
+                if rid in assigned_chain:
+                    chain_occs = assigned_chain[rid]
+                    chain_positions = [available_occs[oi] for oi in chain_occs]
+                    target = chain_positions[0]
+                    chain_rest = chain_positions[1:]
+
+                    # 提取旧的 resume（探索目标）
+                    resume = None
+                    if old_task:
+                        if old_task.get("type") == "rescue":
+                            resume = old_task.get("resume")
+                        elif old_task.get("type") == "explore":
+                            resume = old_task.get("target")
+
+                    active_tasks[rid] = {
+                        "type": "rescue",
+                        "target": target,
+                        "resume": resume,
+                        "chain": chain_rest
+                    }
+                else:
+                    # 未被分配到幸存者 → 回退
+                    if old_task and old_task.get("type") == "rescue":
+                        resume_tgt = old_task.get("resume")
+                        if resume_tgt:
+                            rx_tgt, ry_tgt = resume_tgt
+                            status = MapDataServiceObj.block_status[floor_name].get(f"{rx_tgt},{ry_tgt}")
+                            if status in ("unwatched", "uncertain"):
+                                active_tasks[rid] = {
+                                    "type": "explore",
+                                    "target": resume_tgt,
+                                    "resume": None
+                                }
                             else:
                                 release_claims(rid)
                                 active_tasks.pop(rid, None)
-                        elif old_task and old_task["type"] == "explore":
-                            pass  # 保持探索任务不变
                         else:
+                            release_claims(rid)
                             active_tasks.pop(rid, None)
+                    elif old_task and old_task.get("type") == "explore":
+                        pass  # 保持探索任务不变
+                    else:
+                        active_tasks.pop(rid, None)
         else:
             # 没有可用的幸存者 → 释放所有救援任务，回退到探索
             for rid in list(active_tasks.keys()):
@@ -465,10 +513,35 @@ while True:
                     radius = max(1, int(math.sqrt(vis_area / math.pi)))
                     mark_uncertain_circle((tx, ty), radius, rid)
 
-        # ===== 5. 全部救出后 → 全体寻找最近的出口撤离 =====
+        # ===== 5. 空闲救援者 → 立即前往最近的出口撤离 =====
         all_occupants_now = get_occupants_set()
         exits = MapDataServiceObj.entrances.get(floor_name, [])
 
+        if exits:
+            for rid, (rx, ry) in responders:
+                if rid in active_tasks:
+                    continue  # 有任务在身，不撤离
+                # 已在出口位置的救援者，不再重复分配
+                if (rx, ry) in exits:
+                    continue
+                # 空闲救援者 → 找最近出口
+                best_exit = None
+                best_exit_dist = float("inf")
+                for ex, ey in exits:
+                    d = MapDataServiceObj.astar_distance(floor_name, (rx, ry), [(ex, ey)])
+                    if d is not None and d < best_exit_dist:
+                        best_exit_dist = d
+                        best_exit = (ex, ey)
+
+                if best_exit:
+                    release_claims(rid)
+                    active_tasks[rid] = {
+                        "type": "exit",
+                        "target": best_exit,
+                        "resume": None
+                    }
+
+        # ===== 6. 全部救出后 → 全体寻找最近的出口撤离 =====
         if not all_occupants_now and exits:
             # 检查是否还有 unwatched 区域（如果有，继续探索可能会发现新的幸存者）
             has_unwatched = any(
@@ -501,7 +574,7 @@ while True:
                             "resume": None
                         }
 
-        # ===== 6. 移动 =====
+        # ===== 7. 移动 =====
         # 构建当前占用集合（防止重叠）
         occupied = {pos for rid, pos in responders}
         # 追踪本轮已经移动的（防止交换位置）
@@ -523,7 +596,19 @@ while True:
                             floor["points"] = [p for p in floor["points"]
                                             if not (p.get("type") == "occupant" and p["x"] == tx and p["y"] == ty)]
 
-                    if task["resume"]:
+                    # 检查救援链中是否还有下一个幸存者
+                    chain = task.get("chain", [])
+                    if chain:
+                        # 继续救援链中的下一个幸存者
+                        next_target = chain[0]
+                        next_chain = chain[1:]
+                        active_tasks[rid] = {
+                            "type": "rescue",
+                            "target": next_target,
+                            "resume": task.get("resume"),
+                            "chain": next_chain
+                        }
+                    elif task.get("resume"):
                         rx_tgt, ry_tgt = task["resume"]
                         status = MapDataServiceObj.block_status[floor_name].get(f"{rx_tgt},{ry_tgt}")
                         if status in ("unwatched", "uncertain"):
