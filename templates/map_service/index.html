@@ -55,6 +55,7 @@ canvas { background:#fff; border:1px solid #ccc; }
         <button class="button is-small" onclick="setView('smoke_density')">Smoke</button>
         <button class="button is-small" onclick="setView('probability')">Probability</button>
         <button class="button is-small" onclick="setView('fire_probability')">Fire Prob</button>
+        <button class="button is-small" onclick="setView('redundancy')">Redundancy</button>
       </div>
 
     </div>
@@ -184,6 +185,18 @@ function updateLegend(){
     items = [["#000","wall"],["#fff","0"],["#ff0000","max"]];
   }
 
+  if(viewMode==="redundancy"){
+    items = [
+      ["#000","wall"],
+      ["#ffffff","0"],
+      ["#a0e6ff","1"],
+      ["#4dc3ff","2-3"],
+      ["#00a0ff","4-5"],
+      ["#0060ff","6-8"],
+      ["#0000c0","9+"]
+    ];
+  }
+
   items.forEach(([c,t])=>{
     const row=document.createElement("div");
     row.className="legend-item";
@@ -218,7 +231,6 @@ function draw(){
   /* block_status */
   if(viewMode==="block_status"){
     const s = blockStatus[currentFloor] || {};
-    const r = redundancy[currentFloor] || {};
     for(let k in s){
       if(s[k]==="null") continue;
       const [x,y]=k.split(",").map(Number);
@@ -229,14 +241,35 @@ function draw(){
         "#ffd324";
 
       ctx.fillRect(x*GRID,y*GRID,GRID,GRID);
+    }
+  }
 
-      const red = r[k] || 0;
-      if(red > 0){
-        ctx.fillStyle = "#000";
+  /* redundancy */
+  if(viewMode==="redundancy"){
+    const r = redundancy[currentFloor] || {};
+    for(let k in r){
+      const [x,y]=k.split(",").map(Number);
+      const v = r[k] || 0;
+      if(v === 0){
+        ctx.fillStyle = "#fff";
+      } else if(v <= 1){
+        ctx.fillStyle = "#a0e6ff";
+      } else if(v <= 3){
+        ctx.fillStyle = "#4dc3ff";
+      } else if(v <= 5){
+        ctx.fillStyle = "#00a0ff";
+      } else if(v <= 8){
+        ctx.fillStyle = "#0060ff";
+      } else {
+        ctx.fillStyle = "#0000c0";
+      }
+      ctx.fillRect(x*GRID,y*GRID,GRID,GRID);
+      if(v > 0){
+        ctx.fillStyle = v >= 6 ? "#fff" : "#000";
         ctx.font = "bold 10px monospace";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.fillText(red, x*GRID+GRID/2, y*GRID+GRID/2);
+        ctx.fillText(v, x*GRID+GRID/2, y*GRID+GRID/2);
       }
     }
   }
@@ -405,10 +438,10 @@ canvas.addEventListener("mousemove",e=>{
 
   if(viewMode==="block_status"){
     text += `<br>Status: ${blockStatus[currentFloor]?.[key] ?? "null"}`;
-    const bs = blockStatus[currentFloor]?.[key];
-    if(bs && bs !== "null"){
-      text += `<br>Redundancy: ${redundancy[currentFloor]?.[key] ?? 0}`;
-    }
+  }
+
+  if(viewMode==="redundancy"){
+    text += `<br>Redundancy: ${redundancy[currentFloor]?.[key] ?? 0}`;
   }
 
   if(viewMode==="fire_probability"){

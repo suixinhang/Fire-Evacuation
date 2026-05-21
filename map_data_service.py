@@ -455,19 +455,10 @@ class MapDataService:
                 vis_results = self.compute_visibility_for_responders(fname, responders)
                 
                 # 2. 将这些视野合并到全局 block_status 中
-                #    并统计 redundancy（合并所有 responders 的视野，每个格子只 +1）
-                cells_seen_this_step = set()
                 for rid, visible_cells in vis_results.items():
                     for key in visible_cells:
                         # 只要扫过，就标记为已观测，这会覆盖之前的 unwatched 或遗留状态
                         self.block_status[fname][key] = "watched"
-                        # 非墙壁（非 null）的格子计入 redundancy
-                        if self.block_status[fname].get(key) != "null":
-                            cells_seen_this_step.add(key)
-                
-                # 本秒内所有 responder 合并计数：每个可见格子 +1
-                for key in cells_seen_this_step:
-                    self.redundancy[fname][key] = self.redundancy[fname].get(key, 0) + 1
         
         self._write_frame()
 
