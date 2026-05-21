@@ -91,9 +91,24 @@ def clear_uncertain():
 # 每个搜救者认领的 uncertain 区域（rid → set of cell keys）
 region_claims = {}
 
-# ===== 视线检测（Bresenham 直线追踪，检查是否有墙阻挡）=====
+# ===== 预先提取当前楼层的门坐标（门非透明，阻挡视线）=====
+def _get_doors_on_floor(fname):
+    """返回当前楼层所有 door 的 (x, y) 集合。"""
+    doors = set()
+    floors = MapDataServiceObj.map_obj.get_data()
+    for floor in floors:
+        if floor.get("name") != fname:
+            continue
+        for p in floor.get("points", []):
+            if p.get("type") == "door":
+                doors.add((p["x"], p["y"]))
+        break
+    return doors
+
+# ===== 视线检测（Bresenham 直线追踪，检查是否有墙或门阻挡）=====
 def _has_line_of_sight(cx, cy, tx, ty):
-    """检查从 (cx,cy) 到 (tx,ty) 的直线是否被墙壁阻挡。"""
+    """检查从 (cx,cy) 到 (tx,ty) 的直线是否被墙壁或门阻挡。"""
+    doors = _get_doors_on_floor(floor_name)
     dx = abs(tx - cx)
     dy = abs(ty - cy)
     x, y = cx, cy
@@ -126,7 +141,10 @@ def _has_line_of_sight(cx, cy, tx, ty):
             return True
 
         key = f"{x},{y}"
+        # 墙壁或门阻挡视线
         if MapDataServiceObj.block_status[floor_name].get(key) == "null":
+            return False
+        if (x, y) in doors:
             return False
 
     return True
@@ -300,6 +318,43 @@ def hungarian_assignment(cost):
                 assignment.append((wi, ji))
 
     return assignment
+
+# ===== 开门：人到达门位置时删除门 =====
+def _open_door_if_present(floor_name, pos):
+    """当搜救者到达某位置时，如果该位置是门，则删除门。
+    门是非透明的（阻挡烟雾扩散和视线，但block_status为unwatched以确保A*可规划穿门路径）。
+    只有人实际到达门格时才能打开（删除）."""
+    x, y = pos
+    key = f"{x},{y}"
+
+    # 检查 block_type 中该位置是否为 door
+    floors = MapDataServiceObj.map_obj.get_data()
+    for floor in floors:
+        if floor.get("name") != floor_name:
+            continue
+        for p in floor.get("points", []):
+            if p.get("x") == x and p.get("y") == y and p.get("type") == "door":
+                # 删除 door：从 points 中移除
+                floor["points"] = [
+                    pt for pt in floor["points"]
+                    if not (pt.get("x") == x and pt.get("y") == y and pt.get("type") == "door")
+                ]
+
+                # 更新 block_status：null → unwatched
+                if floor_name in MapDataServiceObj.block_status:
+                    MapDataServiceObj.block_status[floor_name][key] = "unwatched"
+
+                # 更新 smoke_density：-1 → 0
+                if floor_name in MapDataServiceObj.smoke_density:
+                    MapDataServiceObj.smoke_density[floor_name][key] = 0
+
+                # 更新 smoke simulator wall
+                if floor_name in MapDataServiceObj.simulators:
+                    sim = MapDataServiceObj.simulators[floor_name]
+                    sim.wall[y, x] = 0
+
+                logger.info(f"Door opened at ({x}, {y}) on floor {floor_name}")
+                return
 
 # ================= 主循环 =================
 while True:
@@ -765,6 +820,9 @@ while True:
                 MapDataServiceObj.responders[floor_name][rid] = best_next
                 moved_this_step[rid] = best_next
                 last_positions[rid] = (rx, ry)
+
+                # 门是非透明的，人到达时删除门
+                _open_door_if_present(floor_name, best_next)
             elif alternatives:
                 # 所有路径都被占据，选代价最低的那个（不会阻塞）
                 alternatives.sort(key=lambda x: x[1])
@@ -774,6 +832,9 @@ while True:
                 MapDataServiceObj.responders[floor_name][rid] = fallback
                 moved_this_step[rid] = fallback
                 last_positions[rid] = (rx, ry)
+
+                # 门是非透明的，人到达时删除门
+                _open_door_if_present(floor_name, fallback)
             else:
                 # 无路可走，目标不可达
                 if task["type"] == "exit":

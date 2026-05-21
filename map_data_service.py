@@ -122,6 +122,11 @@ class MapDataService:
                             self.smoke_density[fname][key] = -1
                             sim.wall[y, x] = 1
 
+                        elif t == "door":
+                            self.block_status[fname][key] = "unwatched"
+                            self.smoke_density[fname][key] = -1
+                            sim.wall[y, x] = 1
+
                         elif t == "fire_origin":
                             self.block_status[fname][key] = "fire"
                             self.smoke_density[fname][key] = 100
@@ -167,6 +172,11 @@ class MapDataService:
 
                 if t == "wall":
                     self.block_status[fname][key] = "null"
+                    self.smoke_density[fname][key] = -1
+                    sim.wall[y, x] = 1
+
+                elif t == "door":
+                    self.block_status[fname][key] = "unwatched"
                     self.smoke_density[fname][key] = -1
                     sim.wall[y, x] = 1
 
@@ -576,6 +586,16 @@ class MapDataService:
         visible_cells = []
         visited = set()
 
+        # 预计算该楼层所有 door 的坐标（门非透明，阻挡视线）
+        door_positions = set()
+        floors = self.map_obj.get_data() or []
+        for floor in floors:
+            if floor.get("name") == floor_name:
+                for p in floor.get("points", []):
+                    if p.get("type") == "door":
+                        door_positions.add((p["x"], p["y"]))
+                break
+
         for _ in range(max_range * 2):
             x += dx * 0.5
             y += dy * 0.5
@@ -593,9 +613,15 @@ class MapDataService:
             if self.block_status[floor_name][key] == "null":
                 break
 
+            # 门非透明：视线被门阻挡（但门所在的格子本身可见）
+            visible_cells.append(key)
+
+            # 检查是否撞到了门（阻挡后续视线）
+            if (gx, gy) in door_positions:
+                break
+
             smoke = self.smoke_density[floor_name].get(key, 0)
             accumulated_smoke += smoke
-            visible_cells.append(key)
 
             if accumulated_smoke >= smoke_threshold:
                 break
