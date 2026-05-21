@@ -374,9 +374,19 @@ while True:
         for rid, (rx, ry) in responders:
             MapDataServiceObj.block_status[floor_name][rid] = "watched"
 
+        cells_seen_this_step = set()
         for rid, visible in vis_map.items():
             for key in visible:
                 MapDataServiceObj.block_status[floor_name][key] = "watched"
+                # 非墙壁格子计入 redundancy
+                if MapDataServiceObj.block_status[floor_name].get(key) != "null":
+                    cells_seen_this_step.add(key)
+
+        # 每个可见格子 +1
+        for key in cells_seen_this_step:
+            MapDataServiceObj.redundancy[floor_name][key] = (
+                MapDataServiceObj.redundancy[floor_name].get(key, 0) + 1
+            )
 
         # 清理被 watched 覆盖后残留的 uncertain（仅清理已完成探索的区域）
         # 不再全局清除 uncertain，让探索预留标记跨步持久化

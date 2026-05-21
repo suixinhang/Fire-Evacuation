@@ -137,6 +137,7 @@ let fireWeightMap = {};
 let visibilityMap = {};
 let responders = {};
 let activeTasks = {};
+let redundancy = {};
 
 let currentFloor = null;
 let viewMode = "block_type";
@@ -183,35 +184,6 @@ function updateLegend(){
     items = [["#000","wall"],["#fff","0"],["#ff0000","max"]];
   }
 
-  // if(viewMode==="fire_probability"){
-  //   const p = fireProbabilityMap[currentFloor] || {};
-  //   const w = fireWeightMap[currentFloor] || {};
-
-  //   for(let k in p){
-  //     const [x,y]=k.split(",").map(Number);
-
-  //     // 背景：概率颜色
-  //     ctx.fillStyle = probColor(p[k]);
-  //     ctx.fillRect(x*GRID,y*GRID,GRID,GRID);
-
-  //     // ===== 数字：原始 fire_weight =====
-  //     const val = w[k] ?? 0;
-
-  //     if(val > 0){
-  //       ctx.fillStyle = "#000";
-  //       ctx.font = "10px monospace";
-  //       ctx.textAlign = "center";
-  //       ctx.textBaseline = "middle";
-
-  //       ctx.fillText(
-  //         val.toFixed(0),
-  //         x*GRID + GRID/2,
-  //         y*GRID + GRID/2
-  //       );
-  //     }
-  //   }
-  // }
-
   items.forEach(([c,t])=>{
     const row=document.createElement("div");
     row.className="legend-item";
@@ -246,6 +218,7 @@ function draw(){
   /* block_status */
   if(viewMode==="block_status"){
     const s = blockStatus[currentFloor] || {};
+    const r = redundancy[currentFloor] || {};
     for(let k in s){
       if(s[k]==="null") continue;
       const [x,y]=k.split(",").map(Number);
@@ -256,6 +229,15 @@ function draw(){
         "#ffd324";
 
       ctx.fillRect(x*GRID,y*GRID,GRID,GRID);
+
+      const red = r[k] || 0;
+      if(red > 0){
+        ctx.fillStyle = "#000";
+        ctx.font = "bold 10px monospace";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(red, x*GRID+GRID/2, y*GRID+GRID/2);
+      }
     }
   }
 
@@ -329,21 +311,6 @@ function draw(){
       Math.PI * 2
     );
     ctx.fill();
-
-    /* 轻微光晕 */
-    // ctx.fillStyle = task.type === "rescue"
-    //   ? "rgba(81, 154, 186,0.7)"
-    //   : "rgba(35,209,96,0.7)";
-
-    // ctx.beginPath();
-    // ctx.arc(
-    //   tx * GRID + GRID / 2,
-    //   ty * GRID + GRID / 2,
-    //   14,
-    //   0,
-    //   Math.PI * 2
-    // );
-    // ctx.fill();
   }
 
   /* responders sprite */
@@ -418,10 +385,7 @@ canvas.addEventListener("mousemove",e=>{
 
   if (hoveredResponderId && activeTasks[hoveredResponderId]) {
     const t = activeTasks[hoveredResponderId].target;
-
-    // 目标点强化显示
     const key = `${t[0]},${t[1]}`;
-
     hoverVisibleCells = hoverVisibleCells.concat([key]);
   }
 
@@ -441,6 +405,10 @@ canvas.addEventListener("mousemove",e=>{
 
   if(viewMode==="block_status"){
     text += `<br>Status: ${blockStatus[currentFloor]?.[key] ?? "null"}`;
+    const bs = blockStatus[currentFloor]?.[key];
+    if(bs && bs !== "null"){
+      text += `<br>Redundancy: ${redundancy[currentFloor]?.[key] ?? 0}`;
+    }
   }
 
   if(viewMode==="fire_probability"){
@@ -489,6 +457,9 @@ function fetchAll(){
   fetch("/api/fire_weight_map")
   .then(r => r.json())
   .then(d => fireWeightMap = d);
+  fetch("/api/redundancy")
+  .then(r => r.json())
+  .then(d => redundancy = d);
 
   draw();
 }
