@@ -319,42 +319,64 @@ def hungarian_assignment(cost):
 
     return assignment
 
-# ===== 开门：人到达门位置时删除门 =====
+# ===== 开门：人到达门位置时删除该门及其所有连通的门 =====
 def _open_door_if_present(floor_name, pos):
-    """当搜救者到达某位置时，如果该位置是门，则删除门。
+    """当搜救者到达某位置时，如果该位置是门，则删除该门以及所有与其连通（四向相邻）的门。
     门是非透明的（阻挡烟雾扩散和视线，但block_status为unwatched以确保A*可规划穿门路径）。
     只有人实际到达门格时才能打开（删除）."""
     x, y = pos
     key = f"{x},{y}"
 
-    # 检查 block_type 中该位置是否为 door
+    # 第一步：获取当前楼层的所有门坐标
     floors = MapDataServiceObj.map_obj.get_data()
+    all_doors = set()
+    target_floor = None
     for floor in floors:
         if floor.get("name") != floor_name:
             continue
+        target_floor = floor
         for p in floor.get("points", []):
-            if p.get("x") == x and p.get("y") == y and p.get("type") == "door":
-                # 删除 door：从 points 中移除
-                floor["points"] = [
-                    pt for pt in floor["points"]
-                    if not (pt.get("x") == x and pt.get("y") == y and pt.get("type") == "door")
-                ]
+            if p.get("type") == "door":
+                all_doors.add((p["x"], p["y"]))
+        break
 
-                # 更新 block_status：null → unwatched
-                if floor_name in MapDataServiceObj.block_status:
-                    MapDataServiceObj.block_status[floor_name][key] = "unwatched"
+    if (x, y) not in all_doors or target_floor is None:
+        return
 
-                # 更新 smoke_density：-1 → 0
-                if floor_name in MapDataServiceObj.smoke_density:
-                    MapDataServiceObj.smoke_density[floor_name][key] = 0
+    # 第二步：BFS 找到所有与 (x, y) 连通的门（四向相邻）
+    connected_doors = set()
+    queue = [(x, y)]
+    connected_doors.add((x, y))
+    while queue:
+        cx, cy = queue.pop(0)
+        for dx, dy in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
+            nx, ny = cx + dx, cy + dy
+            if (nx, ny) in all_doors and (nx, ny) not in connected_doors:
+                connected_doors.add((nx, ny))
+                queue.append((nx, ny))
 
-                # 更新 smoke simulator wall
-                if floor_name in MapDataServiceObj.simulators:
-                    sim = MapDataServiceObj.simulators[floor_name]
-                    sim.wall[y, x] = 0
+    # 第三步：批量删除所有连通的门
+    target_floor["points"] = [
+        pt for pt in target_floor["points"]
+        if not (pt.get("type") == "door" and (pt["x"], pt["y"]) in connected_doors)
+    ]
 
-                logger.info(f"Door opened at ({x}, {y}) on floor {floor_name}")
-                return
+    for dx, dy in connected_doors:
+        dk = f"{dx},{dy}"
+        # 更新 block_status：null → unwatched
+        if floor_name in MapDataServiceObj.block_status:
+            MapDataServiceObj.block_status[floor_name][dk] = "unwatched"
+        # 更新 smoke_density：-1 → 0
+        if floor_name in MapDataServiceObj.smoke_density:
+            MapDataServiceObj.smoke_density[floor_name][dk] = 0
+        # 更新 smoke simulator wall
+        if floor_name in MapDataServiceObj.simulators:
+            sim = MapDataServiceObj.simulators[floor_name]
+            sim.wall[dy, dx] = 0
+
+    logger.info(
+        f"Door cluster opened: {len(connected_doors)} doors connected to ({x}, {y}) on floor {floor_name}"
+    )
 
 # ================= 主循环 =================
 while True:
@@ -374,19 +396,14 @@ while True:
         for rid, (rx, ry) in responders:
             MapDataServiceObj.block_status[floor_name][rid] = "watched"
 
-        cells_seen_this_step = set()
         for rid, visible in vis_map.items():
             for key in visible:
                 MapDataServiceObj.block_status[floor_name][key] = "watched"
-                # 非墙壁格子计入 redundancy
+                # 非墙壁格子计入 redundancy（每个搜救者每步 +1，多人同时观测则累加）
                 if MapDataServiceObj.block_status[floor_name].get(key) != "null":
-                    cells_seen_this_step.add(key)
-
-        # 每个可见格子 +1
-        for key in cells_seen_this_step:
-            MapDataServiceObj.redundancy[floor_name][key] = (
-                MapDataServiceObj.redundancy[floor_name].get(key, 0) + 1
-            )
+                    MapDataServiceObj.redundancy[floor_name][key] = (
+                        MapDataServiceObj.redundancy[floor_name].get(key, 0) + 1
+                    )
 
         # 清理被 watched 覆盖后残留的 uncertain（仅清理已完成探索的区域）
         # 不再全局清除 uncertain，让探索预留标记跨步持久化
