@@ -91,18 +91,69 @@ def clear_uncertain():
 # 每个搜救者认领的 uncertain 区域（rid → set of cell keys）
 region_claims = {}
 
-# ===== 标记 uncertain =====
+# ===== 视线检测（Bresenham 直线追踪，检查是否有墙阻挡）=====
+def _has_line_of_sight(cx, cy, tx, ty):
+    """检查从 (cx,cy) 到 (tx,ty) 的直线是否被墙壁阻挡。"""
+    dx = abs(tx - cx)
+    dy = abs(ty - cy)
+    x, y = cx, cy
+    n = dx + dy
+    if n == 0:
+        return True  # 同一个格子
+
+    x_inc = 1 if tx > cx else -1 if tx < cx else 0
+    y_inc = 1 if ty > cy else -1 if ty < cy else 0
+    error = dx - dy
+    dx2 = dx * 2
+    dy2 = dy * 2
+
+    for _ in range(n):
+        # 下一个格子
+        if error > -dy:
+            x += x_inc
+            error -= dy2
+        elif error < dx:
+            y += y_inc
+            error += dx2
+        else:
+            # error == 0: 对角移动
+            x += x_inc
+            error -= dy2
+            y += y_inc
+            error += dx2
+
+        if (x, y) == (tx, ty):
+            return True
+
+        key = f"{x},{y}"
+        if MapDataServiceObj.block_status[floor_name].get(key) == "null":
+            return False
+
+    return True
+
+# ===== 标记 uncertain（带墙体遮挡检测）=====
 def mark_uncertain_circle(center, radius, rid):
+    """以 center 为圆心、radius 为半径标记 uncertain。
+    只标记从 center 出发视线不被墙壁阻挡的格子。"""
     cx, cy = center
     claimed = set()
-    for key in MapDataServiceObj.block_status[floor_name]:
-        if MapDataServiceObj.block_status[floor_name][key] != "unwatched":
-            continue
-        x, y = map(int, key.split(","))
-        if (x - cx) ** 2 + (y - cy) ** 2 <= radius ** 2:
-            # 不标记目标中心本身，保持 unwatched 使任务有效
+    # 只遍历半径范围内的格子，减少不必要的计算
+    for dx in range(-radius, radius + 1):
+        for dy in range(-radius, radius + 1):
+            if dx * dx + dy * dy > radius * radius:
+                continue
+            x, y = cx + dx, cy + dy
+            key = f"{x},{y}"
+            if key not in MapDataServiceObj.block_status[floor_name]:
+                continue
+            if MapDataServiceObj.block_status[floor_name][key] != "unwatched":
+                continue
+            # 目标中心本身不标记，保持 unwatched 使任务有效
             if (x, y) == (cx, cy):
                 claimed.add(key)
+                continue
+            # 墙体遮挡检测
+            if not _has_line_of_sight(cx, cy, x, y):
                 continue
             MapDataServiceObj.block_status[floor_name][key] = "uncertain"
             claimed.add(key)
@@ -472,6 +523,23 @@ while True:
         # ===== 4. 全局最优探索任务分配（匈牙利算法）=====
         free_responders = [rid for rid, pos in responders if rid not in active_tasks]
 
+        # --- 每步动态重新标记 uncertain 区域 ---
+        # 清除所有旧的 uncertain 标记和 claims，然后根据当前可见面积重新标记
+        for k in MapDataServiceObj.block_status[floor_name]:
+            if MapDataServiceObj.block_status[floor_name][k] == "uncertain":
+                MapDataServiceObj.block_status[floor_name][k] = "unwatched"
+        region_claims.clear()
+
+        # 为已有探索任务重新标记 uncertain（使用当前可见面积）
+        responders_dict_temp = dict(responders)
+        for rid in list(active_tasks.keys()):
+            task = active_tasks[rid]
+            if task["type"] == "explore":
+                tx, ty = task["target"]
+                vis_area = len(vis_map.get(rid, []))
+                radius = max(1, int(math.sqrt(vis_area / math.pi)))
+                mark_uncertain_circle((tx, ty), radius, rid)
+
         if free_responders:
             regions = compute_regions()
             candidates = build_candidates(regions)
@@ -480,7 +548,7 @@ while True:
                 responders_dict = dict(responders)
 
                 # === 构建代价矩阵 ===
-                # 代价 = distance / area（越小越好）
+                # 代价 = distance / log(1 + area)（对数压缩面积优势，避免舍近求远）
                 cost_matrix = []
                 for rid in free_responders:
                     rx, ry = responders_dict[rid]
@@ -488,7 +556,7 @@ while True:
                     for (tx, ty, area) in candidates:
                         d = MapDataServiceObj.astar_distance(floor_name, (rx, ry), [(tx, ty)])
                         if d is not None:
-                            row.append(d / (area + 1e-5))
+                            row.append(d / math.log(1 + area))
                         else:
                             row.append(INF_COST)
                     cost_matrix.append(row)
