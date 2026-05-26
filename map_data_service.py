@@ -462,6 +462,22 @@ class MapDataService:
         
         self._write_frame()
 
+    def export_map_snapshot(self, floor_name, target_path):
+        """
+        导出当前地图快照为 JSON 文件（与 export_map 相同格式）
+        """
+        import json, pathlib
+        target_path = pathlib.Path(target_path)
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+
+        map_data_json = {
+            "id": self.map_obj.get_id(),
+            "name": self.map_obj.get_name(),
+            "data": self.map_obj.get_data(),
+        }
+        with open(target_path, "w", encoding="utf-8") as fp:
+            fp.write(json.dumps(map_data_json, ensure_ascii=False, indent=2))
+
     def calculate_ann_index(self, floor_name):
         """
         计算ANN index (Average Nearest Neighbor Index)：

@@ -56,13 +56,20 @@ def replay(map_id, record_id, http_addr, http_port):
 @click.option('--random-occupant', help="Random Occupants per trial", type=int, default=0)
 @click.option('--map-id', help="Use which map?", type=str)
 @click.option('--trials', help="Number of trials", type=int, default=10)
+@click.option('--ann-min', help="Target ANN min (hunt mode: keep generating until ANN in [ann-min, ann-max])", type=float, default=None)
+@click.option('--ann-max', help="Target ANN max (hunt mode: keep generating until ANN in [ann-min, ann-max])", type=float, default=None)
+@click.option('--max-attempts', help="Max attempts in hunt mode (0 = unlimited)", type=int, default=0)
 @click.option('--http-addr', help="HTTP Server Addr", default="0.0.0.0", type=str)
 @click.option('--http-port', help="HTTP Server Port", default=8000, type=int)
-def ann_calculation(debug, no_record, dis_init_fire, random_occupant, map_id, trials, http_addr, http_port):
+def ann_calculation(debug, no_record, dis_init_fire, random_occupant, map_id, trials, ann_min, ann_max, max_attempts, http_addr, http_port):
     """
-    Calculate ANN Index over multiple trials
+    Calculate ANN Index over multiple trials, or hunt for a specific ANN range.
+
+    Hunt mode (--ann-min and --ann-max both set):
+        Keep respawning occupants until ANN falls in [ann_min, ann_max],
+        then save the map snapshot to ./map_snapshot/<timestamp>/map.json
     """
-    import os, math, random
+    import os, math, random, time, json, pathlib
     os.environ["FIRE_EVACUATION_DEBUG"] = '1' if debug else '0'
     os.environ["FIRE_EVACUATION_NO_RECORD"] = '1' if no_record else '0'
     os.environ["FIRE_EVACUATION_DISABLE_INIT_FIRE"] = '1' if dis_init_fire else '0'
@@ -80,6 +87,55 @@ def ann_calculation(debug, no_record, dis_init_fire, random_occupant, map_id, tr
 
     floor_name = MapDataServiceObj.map_obj.get_data()[0]["name"]
 
+    # ===== HUNT MODE: --ann-min 和 --ann-max 都指定时 =====
+    if ann_min is not None and ann_max is not None:
+        print(f"\n{'='*80}")
+        print(f"ANN Hunt Mode")
+        print(f"Map: {MapDataServiceObj.map_obj.get_name()} (ID: {map_id})")
+        print(f"Floor: {floor_name}")
+        print(f"Occupants: {random_occupant}")
+        print(f"Target ANN range: [{ann_min:.4f}, {ann_max:.4f}]")
+        print(f"Max attempts: {max_attempts if max_attempts > 0 else 'unlimited'}")
+        print(f"{'='*80}\n")
+
+        # 一次运行一个文件夹，里面放多个命中快照
+        run_timestamp = str(int(time.time()))
+        snapshot_dir = pathlib.Path(__file__).parent / "map_snapshot" / run_timestamp
+        snapshot_dir.mkdir(parents=True, exist_ok=True)
+        hits = 0
+
+        attempt = 0
+        while True:
+            attempt += 1
+            MapDataServiceObj.respawn_occupants(floor_name, random_occupant)
+            ann = MapDataServiceObj.calculate_ann_index(floor_name)
+
+            if ann is None:
+                print(f"  Attempt {attempt}: FAILED (N<2 or no weighted area)")
+            else:
+                in_range = ann_min <= ann["ann_index"] <= ann_max
+                marker = " <<< HIT" if in_range else ""
+                print(f"  Attempt {attempt}: ANN={ann['ann_index']:.4f}  k={ann['k']:.4f}  k_exp={ann['k_expected']:.4f}  N={ann['N']}{marker}")
+
+                if in_range:
+                    hits += 1
+                    file_name = f"{run_timestamp}_{hits}.json"
+                    snapshot_path = snapshot_dir / file_name
+                    MapDataServiceObj.export_map_snapshot(floor_name, str(snapshot_path))
+                    print(f"  -> Saved: {snapshot_path}")
+
+            if max_attempts > 0 and attempt >= max_attempts:
+                break
+
+        print(f"\n{'='*80}")
+        print(f"HUNT COMPLETE")
+        print(f"  Total attempts: {attempt}")
+        print(f"  Hits:           {hits}")
+        print(f"  Saved to:       {snapshot_dir}")
+        print(f"{'='*80}\n")
+        return
+
+    # ===== NORMAL MODE: 多轮统计 =====
     print(f"\n{'='*80}")
     print(f"ANN Index Calculation")
     print(f"Map: {MapDataServiceObj.map_obj.get_name()} (ID: {map_id})")
@@ -116,7 +172,7 @@ def ann_calculation(debug, no_record, dis_init_fire, random_occupant, map_id, tr
         print(f"  Average k:          {avg_k:.4f}")
         print(f"  Average k_expected: {avg_k_expected:.4f}")
         print(f"  Average ANN Index:  {avg_ann:.4f}")
-        print(f"  (ANN ≈ 1 → random distribution, ANN < 1 → clustered, ANN > 1 → dispersed)")
+        print(f"  (ANN ~ 1 -> random distribution, ANN < 1 -> clustered, ANN > 1 -> dispersed)")
         print(f"{'='*80}\n")
 
 @click.command(help="Test Smoke Distrubution")
