@@ -49,6 +49,76 @@ def replay(map_id, record_id, http_addr, http_port):
     os.environ["FIRE_EVACUATION_HTTP_PORT"] = str(http_port)
     import replay_service
 
+@click.command(help="Calculate ANN Index (Average Nearest Neighbor)")
+@click.option('--debug', is_flag=True, help="Debug")
+@click.option('--no-record', is_flag=True, help="No Record")
+@click.option('--dis-init_fire', is_flag=True, help="Disable init fire")
+@click.option('--random-occupant', help="Random Occupants per trial", type=int, default=0)
+@click.option('--map-id', help="Use which map?", type=str)
+@click.option('--trials', help="Number of trials", type=int, default=10)
+@click.option('--http-addr', help="HTTP Server Addr", default="0.0.0.0", type=str)
+@click.option('--http-port', help="HTTP Server Port", default=8000, type=int)
+def ann_calculation(debug, no_record, dis_init_fire, random_occupant, map_id, trials, http_addr, http_port):
+    """
+    Calculate ANN Index over multiple trials
+    """
+    import os, math, random
+    os.environ["FIRE_EVACUATION_DEBUG"] = '1' if debug else '0'
+    os.environ["FIRE_EVACUATION_NO_RECORD"] = '1' if no_record else '0'
+    os.environ["FIRE_EVACUATION_DISABLE_INIT_FIRE"] = '1' if dis_init_fire else '0'
+    os.environ["FIRE_EVACUATION_DISABLE_INIT_PROBABILITY"] = '0'
+    os.environ["FIRE_EVACUATION_RANDOM_OCCUPANT"] = '0'
+    if not map_id:
+        raise ValueError("No provided good map id!")
+    os.environ["FIRE_EVACUATION_USE_MAP_ID"] = map_id
+    os.environ["FIRE_EVACUATION_HTTP_ADDR"] = http_addr
+    os.environ["FIRE_EVACUATION_HTTP_PORT"] = str(http_port)
+    os.environ["FIRE_EVACUATION_SPEED"] = "0"
+    os.environ["FIRE_EVACUATION_MOVE_AFTER"] = "999999"
+
+    from map_data_service import MapDataServiceObj
+
+    floor_name = MapDataServiceObj.map_obj.get_data()[0]["name"]
+
+    print(f"\n{'='*80}")
+    print(f"ANN Index Calculation")
+    print(f"Map: {MapDataServiceObj.map_obj.get_name()} (ID: {map_id})")
+    print(f"Floor: {floor_name}")
+    print(f"Occupants per trial: {random_occupant}")
+    print(f"Trials: {trials}")
+    print(f"{'='*80}\n")
+
+    # 预计算加权面积（固定不变）
+    weighted_area = sum(
+        w for w in MapDataServiceObj.cell_weight.get(floor_name, {}).values() if w > 0
+    )
+    print(f"Weighted Area: {weighted_area} cells\n")
+
+    results = []
+    for trial in range(trials):
+        MapDataServiceObj.respawn_occupants(floor_name, random_occupant)
+        ann = MapDataServiceObj.calculate_ann_index(floor_name)
+        if ann is None:
+            print(f"  Trial {trial + 1:2d}: FAILED (N={random_occupant}, need >= 2 occupants with weight>0 area)")
+            results.append(None)
+            continue
+        results.append(ann)
+        print(f"  Trial {trial + 1:2d}: k={ann['k']:.4f}  k_exp={ann['k_expected']:.4f}  "
+              f"ANN={ann['ann_index']:.4f}  N={ann['N']}  rho={ann['rho']:.6f}")
+
+    valid = [r for r in results if r is not None]
+    if valid:
+        avg_ann = sum(r["ann_index"] for r in valid) / len(valid)
+        avg_k = sum(r["k"] for r in valid) / len(valid)
+        avg_k_expected = sum(r["k_expected"] for r in valid) / len(valid)
+        print(f"\n{'='*80}")
+        print(f"SUMMARY ({len(valid)}/{trials} valid trials)")
+        print(f"  Average k:          {avg_k:.4f}")
+        print(f"  Average k_expected: {avg_k_expected:.4f}")
+        print(f"  Average ANN Index:  {avg_ann:.4f}")
+        print(f"  (ANN ≈ 1 → random distribution, ANN < 1 → clustered, ANN > 1 → dispersed)")
+        print(f"{'='*80}\n")
+
 @click.command(help="Test Smoke Distrubution")
 @click.option('--debug', is_flag=True, help="Debug")
 @click.option('--no-record', is_flag=True, help="Record")
@@ -85,6 +155,7 @@ cli.add_command(draw_map)
 cli.add_command(export_map)
 cli.add_command(import_map)
 cli.add_command(replay)
+cli.add_command(ann_calculation)
 cli.add_command(algorithm_simulation)
 
 if __name__ == '__main__':

@@ -462,6 +462,67 @@ class MapDataService:
         
         self._write_frame()
 
+    def calculate_ann_index(self, floor_name):
+        """
+        计算ANN index (Average Nearest Neighbor Index)：
+        1. 对每个occupant，找最近邻的欧几里得距离 r_i
+        2. 平均最近邻距离 k = Σr_i / N
+        3. 密度 ρ = N / weighted_area（weighted_area = Σcell_weight > 0 的格子权重和）
+        4. 期望最近邻距离 k_expected = 1 / (2 * sqrt(ρ))
+        5. ANN index = k / k_expected
+        
+        返回: (k, k_expected, ann_index, N, weighted_area, rho)
+        """
+        import math
+        
+        # 收集所有 occupant 坐标
+        occupants = []
+        floors = self.map_obj.get_data()
+        for floor in floors:
+            if floor.get("name") != floor_name:
+                continue
+            for p in floor.get("points", []):
+                if p.get("type") == "occupant":
+                    occupants.append((p["x"], p["y"]))
+        
+        N = len(occupants)
+        if N < 2:
+            return None  # 人数不足无法计算
+        
+        # 计算每个occupant到最近其他occupant的欧几里得距离
+        total_min_dist = 0.0
+        for i, (x1, y1) in enumerate(occupants):
+            min_dist = float("inf")
+            for j, (x2, y2) in enumerate(occupants):
+                if i == j:
+                    continue
+                d = math.hypot(x1 - x2, y1 - y2)
+                if d < min_dist:
+                    min_dist = d
+            total_min_dist += min_dist
+        
+        k = total_min_dist / N  # 平均最近邻距离
+        
+        # 计算加权面积（只算weight > 0的格子，wall/door/corridor的weight=0）
+        weighted_area = sum(
+            w for w in self.cell_weight.get(floor_name, {}).values() if w > 0
+        )
+        if weighted_area <= 0:
+            return None
+        
+        rho = N / weighted_area  # 密度
+        k_expected = 1.0 / (2.0 * math.sqrt(rho))  # 期望最近邻距离（泊松分布）
+        ann_index = k / k_expected if k_expected > 0 else float("inf")
+        
+        return {
+            "k": k,
+            "k_expected": k_expected,
+            "ann_index": ann_index,
+            "N": N,
+            "weighted_area": weighted_area,
+            "rho": rho
+        }
+
     def respawn_occupants(self, floor_name, N):
         """
         清空地图中的 occupant，并根据 probability_map 随机生成 N 个 occupant
