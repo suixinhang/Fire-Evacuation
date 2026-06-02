@@ -626,7 +626,7 @@ class MapDataService:
                 continue
 
             visible = self._compute_visible_from_point(
-                floor_name, (x, y), 72, 50, 0.3
+                floor_name, (x, y), 72, 50, 0.78
             )
 
             result[rid] = visible

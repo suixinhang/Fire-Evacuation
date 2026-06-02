@@ -27,7 +27,7 @@ class SmokeSimulation:
         
         # 这里的 a 对应于扩散强度因子
         self.dx = 0.5
-        a = self.dt * diff_rate * (self.dx)**2
+        a = (self.dt * diff_rate) / (self.dx ** 2)
         new_field = field.copy()
         
         for _ in range(iterations):
@@ -50,8 +50,8 @@ class SmokeSimulation:
                 if self.wall[i, j] == 1:
                     continue
                 # 半拉格朗日回溯
-                prev_i = i - self.dt * v[i, j]
-                prev_j = j - self.dt * u[i, j]
+                prev_i = i - (self.dt * v[i, j]) / self.dx
+                prev_j = j - (self.dt * u[i, j]) / self.dx
                 
                 prev_i = max(0.5, min(self.size_y-1.5, prev_i))
                 prev_j = max(0.5, min(self.size_x-1.5, prev_j))
@@ -71,7 +71,7 @@ class SmokeSimulation:
         div = np.zeros((self.size_y, self.size_x))
         p = np.zeros((self.size_y, self.size_x))
         
-        div[1:-1, 1:-1] = -0.5 * (
+        div[1:-1, 1:-1] = -0.5 *self.dx * (
             (u[1:-1, 2:] - u[1:-1, :-2]) +  
             (v[2:, 1:-1] - v[:-2, 1:-1])     
         )
@@ -86,8 +86,8 @@ class SmokeSimulation:
             p[self.wall == 1] = 0
             p = self.add_boundary_conditions(p)
         
-        u[1:-1, 1:-1] -= 0.5 * (p[1:-1, 2:] - p[1:-1, :-2])
-        v[1:-1, 1:-1] -= 0.5 * (p[2:, 1:-1] - p[:-2, 1:-1])
+        u[1:-1, 1:-1] -= 0.5 * (p[1:-1, 2:] - p[1:-1, :-2])/self.dx
+        v[1:-1, 1:-1] -= 0.5 * (p[2:, 1:-1] - p[:-2, 1:-1])/self.dx
         
         u = self.add_boundary_conditions(u)
         v = self.add_boundary_conditions(v)
