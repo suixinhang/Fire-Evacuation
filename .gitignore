@@ -1,6 +1,7 @@
 map_data/*
 record/*
 map_record/*
+map_snapshot/*
 
 !.gitkeep
 

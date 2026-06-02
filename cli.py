@@ -102,6 +102,8 @@ def ann_calculation(debug, no_record, dis_init_fire, random_occupant, map_id, tr
         run_timestamp = str(int(time.time()))
         snapshot_dir = pathlib.Path(__file__).parent / "map_snapshot" / run_timestamp
         snapshot_dir.mkdir(parents=True, exist_ok=True)
+        found_larger = False
+        found_smaller = False
         hits = 0
 
         attempt = 0
@@ -113,18 +115,37 @@ def ann_calculation(debug, no_record, dis_init_fire, random_occupant, map_id, tr
             if ann is None:
                 print(f"  Attempt {attempt}: FAILED (N<2 or no weighted area)")
             else:
-                in_range = ann_min <= ann["ann_index"] <= ann_max
-                marker = " <<< HIT" if in_range else ""
-                print(f"  Attempt {attempt}: ANN={ann['ann_index']:.4f}  k={ann['k']:.4f}  k_exp={ann['k_expected']:.4f}  N={ann['N']}{marker}")
+                is_larger = ann["ann_index"] >= ann_max
+                is_smaller = ann["ann_index"] <= ann_min
+                markers = []
+                if is_larger:
+                    markers.append("LARGER")
+                if is_smaller:
+                    markers.append("SMALLER")
+                marker_str = " <<< " + "+".join(markers) if markers else ""
+                print(f"  Attempt {attempt}: ANN={ann['ann_index']:.4f}  k={ann['k']:.4f}  k_exp={ann['k_expected']:.4f}  N={ann['N']}{marker_str}")
 
-                if in_range:
+                if is_larger and not found_larger:
+                    found_larger = True
                     hits += 1
-                    file_name = f"{run_timestamp}_{hits}.json"
+                    file_name = f"{run_timestamp}_{hits}_larger.json"
                     snapshot_path = snapshot_dir / file_name
                     MapDataServiceObj.export_map_snapshot(floor_name, str(snapshot_path))
-                    print(f"  -> Saved: {snapshot_path}")
+                    print(f"  -> Saved (larger): {snapshot_path}")
 
-            if max_attempts > 0 and attempt >= max_attempts:
+                if is_smaller and not found_smaller:
+                    found_smaller = True
+                    hits += 1
+                    file_name = f"{run_timestamp}_{hits}_smaller.json"
+                    snapshot_path = snapshot_dir / file_name
+                    MapDataServiceObj.export_map_snapshot(floor_name, str(snapshot_path))
+                    print(f"  -> Saved (smaller): {snapshot_path}")
+
+            if max_attempts == 0:
+                if found_larger and found_smaller:
+                    print(f"\n  -> Both targets found (larger & smaller), stopping.")
+                    break
+            elif attempt >= max_attempts:
                 break
 
         print(f"\n{'='*80}")
