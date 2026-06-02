@@ -1,12 +1,14 @@
 import numpy as np
 
 class SmokeSimulation:
-    def __init__(self, size_x, size_y, dt=0.2, diffusion=0.1, viscosity=0.0001):
+    def __init__(self, size_x, size_y, dt=0.2, diffusion=0.1, viscosity=0.0001, strength = 0.5, inismoke =0.1):
         self.size_x = size_x
         self.size_y = size_y
         self.dt = dt
         self.diffusion = diffusion  # 烟雾扩散率
         self.viscosity = viscosity  # 速度场粘滞系数
+        self.strength = strength
+        self.inismoke = inismoke
         
         self.u = np.zeros((size_y, size_x))
         self.v = np.zeros((size_y, size_x))
@@ -95,13 +97,13 @@ class SmokeSimulation:
         v[self.wall == 1] = 0 
         return u, v
 
-    def inject_source(self, fire_origins):
+    def inject_source(self, fire_origins,strength = 0.5,inismoke = 0.1):
         if not fire_origins:
             return
         
         y, x = np.indices((self.size_y, self.size_x))
         sigma = 1.5
-        strength = 0.5
+
         
         for fx, fy in fire_origins:
             dx = x - fx
@@ -112,7 +114,7 @@ class SmokeSimulation:
             influence = np.exp(-dist_sq / (2 * sigma**2))
             self.u += (dx / dist) * influence * strength * (self.dt / 0.2)
             self.v += (dy / dist) * influence * strength * (self.dt / 0.2)
-            self.smoke += influence * (0.015 * self.dt)
+            self.smoke += influence * (inismoke * self.dt)
     
     def apply_blur(self, field, amount=0.2):
 
