@@ -187,7 +187,8 @@ def ann_calculation(debug, no_record, dis_init_fire, random_occupant, map_id, tr
 @click.option('--http-port', help="HTTP Server Port", default = 8000, type = int)
 @click.option('--speed', help="Simulation speed multiplier", default = 1.0, type = float)
 @click.option('--move-after', help="Move after what secound?", default = 0, type = int)
-def algorithm_simulation(debug, no_record, dis_prob, dis_init_fire, random_occupant, map_id, use_old_fire_simulation, http_addr, http_port, speed, move_after):
+@click.option('--save-map', is_flag=True, help="Save initial random map as .pkl in map_record/")
+def algorithm_simulation(debug, no_record, dis_prob, dis_init_fire, random_occupant, map_id, use_old_fire_simulation, http_addr, http_port, speed, move_after, save_map):
     """
     Algorithm Simulation
     """
@@ -205,6 +206,7 @@ def algorithm_simulation(debug, no_record, dis_prob, dis_init_fire, random_occup
     os.environ["FIRE_EVACUATION_HTTP_PORT"] = str(http_port)
     os.environ["FIRE_EVACUATION_SPEED"] = str(speed)
     os.environ["FIRE_EVACUATION_MOVE_AFTER"] = str(move_after)
+    os.environ["FIRE_EVACUATION_SAVE_MAP"] = '1' if save_map else '0'
     import algorithm_simulation
 
 cli.add_command(draw_map)

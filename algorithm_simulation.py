@@ -54,6 +54,21 @@ while not MapDataServiceObj.is_init_end:
     ...
 
 
+# ===== 保存初始随机地图 =====
+if os.getenv("FIRE_EVACUATION_SAVE_MAP", "0") == "1":
+    import pathlib, pickle
+    timestamp = str(int(time.time()))
+    record_dir = pathlib.Path(__file__).parent / "map_record"
+    record_dir.mkdir(parents=True, exist_ok=True)
+    pkl_path = record_dir / f"{timestamp}.pkl"
+    with open(pkl_path, "wb") as fp:
+        pickle.dump({
+            "map_id": MapDataServiceObj.map_obj.get_id(),
+            "map_name": MapDataServiceObj.map_obj.get_name(),
+            "map_data": MapDataServiceObj.map_obj.get_data(),
+        }, fp)
+    logger.info(f"Initial map saved to {pkl_path}")
+
 # ===== 初始化烟雾状态 =====
 if smoke_frames:
     first = smoke_frames[0]
