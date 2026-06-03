@@ -1,14 +1,16 @@
 import numpy as np
 
 class SmokeSimulation:
-    def __init__(self, size_x, size_y, dt=0.2, diffusion=0.1, viscosity=0.0001, strength = 0.5, inismoke =0.1):
+    def __init__(self, size_x, size_y, dt=0.2, diffusion=0.1, viscosity=0.0001, strength=0.5, inismoke=0.01, decay_factor=0.9996, dx=0.5):
         self.size_x = size_x
         self.size_y = size_y
         self.dt = dt
+        self.dx = dx
         self.diffusion = diffusion  # 烟雾扩散率
         self.viscosity = viscosity  # 速度场粘滞系数
         self.strength = strength
         self.inismoke = inismoke
+        self.decay_factor = decay_factor
         
         self.u = np.zeros((size_y, size_x))
         self.v = np.zeros((size_y, size_x))
@@ -23,23 +25,40 @@ class SmokeSimulation:
         field[:, -1] = field[:, -2]
         return field
 
+    def _neumann_neighbors(self, field):
+        """Return (left, right, up, down) with Neumann BC: wall neighbors replaced by center value."""
+        center = field[1:-1, 1:-1]
+        wall_mask = self.wall == 1
+
+        left_raw = field[1:-1, :-2]
+        left_nbr = np.where(wall_mask[1:-1, :-2], center, left_raw)
+
+        right_raw = field[1:-1, 2:]
+        right_nbr = np.where(wall_mask[1:-1, 2:], center, right_raw)
+
+        up_raw = field[:-2, 1:-1]
+        up_nbr = np.where(wall_mask[:-2, 1:-1], center, up_raw)
+
+        down_raw = field[2:, 1:-1]
+        down_nbr = np.where(wall_mask[2:, 1:-1], center, down_raw)
+
+        return left_nbr, right_nbr, up_nbr, down_nbr
+
     def diffuse(self, field, diff_rate, iterations=20):
         if diff_rate <= 0:
             return field
         
         # 这里的 a 对应于扩散强度因子
-        self.dx = 0.5
         a = (self.dt * diff_rate) / (self.dx ** 2)
         new_field = field.copy()
         
         for _ in range(iterations):
+            left, right, up, down = self._neumann_neighbors(new_field)
+
             new_field[1:-1, 1:-1] = (
-                field[1:-1, 1:-1] + a * (
-                    new_field[1:-1, :-2] + new_field[1:-1, 2:] +
-                    new_field[:-2, 1:-1] + new_field[2:, 1:-1]
-                )
+                field[1:-1, 1:-1] + a * (left + right + up + down)
             ) / (1 + 4 * a)
-            # 保持边界和墙壁处理
+
             new_field[self.wall == 1] = 0
             new_field = self.add_boundary_conditions(new_field)
             
@@ -47,26 +66,40 @@ class SmokeSimulation:
 
     def advect(self, field, u, v):
         new_field = np.zeros_like(field)
-        for i in range(1, self.size_y-1):
-            for j in range(1, self.size_x-1):
-                if self.wall[i, j] == 1:
-                    continue
-                # 半拉格朗日回溯
-                prev_i = i - (self.dt * v[i, j]) / self.dx
-                prev_j = j - (self.dt * u[i, j]) / self.dx
-                
-                prev_i = max(0.5, min(self.size_y-1.5, prev_i))
-                prev_j = max(0.5, min(self.size_x-1.5, prev_j))
-                
-                i0, j0 = int(prev_i), int(prev_j)
-                i1, j1 = i0 + 1, j0 + 1
-                s1, t1 = prev_i - i0, prev_j - j0
-                s0, t0 = 1 - s1, 1 - t1
-                
-                new_field[i, j] = (
-                    s0 * (t0 * field[i0, j0] + t1 * field[i0, j1]) +
-                    s1 * (t0 * field[i1, j0] + t1 * field[i1, j1])
-                )
+
+        # 构造内部网格索引矩阵 (shape: (size_y-2, size_x-2))
+        i_idx, j_idx = np.meshgrid(
+            np.arange(1, self.size_y - 1),
+            np.arange(1, self.size_x - 1),
+            indexing='ij'
+        )
+
+        # 半拉格朗日回溯（全网格同时计算）
+        prev_i = i_idx - (self.dt * v[1:-1, 1:-1]) / self.dx
+        prev_j = j_idx - (self.dt * u[1:-1, 1:-1]) / self.dx
+
+        # Clamp 到有效范围
+        prev_i = np.clip(prev_i, 0.5, self.size_y - 1.5)
+        prev_j = np.clip(prev_j, 0.5, self.size_x - 1.5)
+
+        # 整数部分 & 小数部分
+        i0 = np.floor(prev_i).astype(np.int64)
+        j0 = np.floor(prev_j).astype(np.int64)
+        i1 = i0 + 1
+        j1 = j0 + 1
+
+        s1 = prev_i - i0
+        t1 = prev_j - j0
+        s0 = 1.0 - s1
+        t0 = 1.0 - t1
+
+        # 双线性插值（fancy indexing，C 层完成）
+        new_field[1:-1, 1:-1] = (
+            s0 * (t0 * field[i0, j0] + t1 * field[i0, j1]) +
+            s1 * (t0 * field[i1, j0] + t1 * field[i1, j1])
+        )
+
+        new_field[self.wall == 1] = 0
         return self.add_boundary_conditions(new_field)
 
     def project_pressure(self, u, v, iterations=20):
@@ -97,7 +130,7 @@ class SmokeSimulation:
         v[self.wall == 1] = 0 
         return u, v
 
-    def inject_source(self, fire_origins,strength = 0.5,inismoke = 0.1):
+    def inject_source(self, fire_origins,strength = 0.5,inismoke = 0.01):
         if not fire_origins:
             return
         
@@ -135,7 +168,7 @@ class SmokeSimulation:
             self.dt = dt
             
         # 1. 外部力/源注入
-        self.inject_source(fire_origins)
+        self.inject_source(fire_origins,self.strength, self.inismoke)
 
         # 2. 扩散步骤 (Diffusion)
         # 速度场的扩散即为粘滞力 (Viscosity)
@@ -155,7 +188,7 @@ class SmokeSimulation:
         self.v = self.advect(v_pure, u_pure, v_pure)
         self.smoke = self.advect(self.smoke, u_pure, v_pure)
 
-        decay_factor = 0.997 ** (self.dt / 0.2)
-        self.smoke *= decay_factor
-        self.smoke = self.apply_blur(self.smoke, amount=0.4)
+        actual_factor = self.decay_factor ** (self.dt / 0.2)
+        self.smoke *= actual_factor
+        # self.smoke = self.apply_blur(self.smoke, amount=0.4)
         self.smoke[self.wall == 1] = 0
