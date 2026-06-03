@@ -104,6 +104,15 @@ target_dt = dt
 
 last_positions = {}
 
+# ===== 统计计时器 =====
+responder_start_step = None  # responder 开始移动的 step
+responder_arrival_steps = []  # 每个 responder 到达出口的 step 列表
+responder_arrival_steps_dict = set()  # 防止重复记录
+last_occupant_rescued_step = None  # 最后一位 occupant 被救出的 step
+responder_cnt_total = responder_cnt
+first_move_step = int(os.getenv("FIRE_EVACUATION_MOVE_AFTER", "0"))
+exits = MapDataServiceObj.entrances.get(floor_name, [])
+
 # 全局任务锁：记录搜救者当前的状态和目标
 # 格式: { rid: {"type": "explore"/"rescue"/"exit", "target": (tx, ty), "resume": (x, y) 或 None} }
 active_tasks = {}
@@ -418,7 +427,12 @@ def _open_door_if_present(floor_name, pos):
 # ================= 主循环 =================
 while True:
     start_time = time.time()
-    if int(os.getenv("FIRE_EVACUATION_MOVE_AFTER")) - step_counter <= 0:
+    if first_move_step - step_counter <= 0:
+        # 记录 responder 开始移动的时间点
+        if responder_start_step is None and responder_cnt_total > 0:
+            responder_start_step = step_counter
+            logger.info(f"Responder movement started at step {responder_start_step}")
+
         MapDataServiceObj.active_tasks = active_tasks
 
         responders = MapDataServiceObj.get_responders(floor_name)
@@ -783,6 +797,12 @@ while True:
                             floor["points"] = [p for p in floor["points"]
                                             if not (p.get("type") == "occupant" and p["x"] == tx and p["y"] == ty)]
 
+                    # 如果这是最后一位幸存者，记录时间
+                    remaining_occs = get_occupants_set()
+                    if not remaining_occs and last_occupant_rescued_step is None:
+                        last_occupant_rescued_step = step_counter
+                        logger.info(f"Last occupant rescued at step {step_counter}")
+
                     # 检查救援链中是否还有下一个幸存者
                     chain = task.get("chain", [])
                     if chain:
@@ -812,11 +832,16 @@ while True:
                         active_tasks.pop(rid)
 
                 elif task["type"] == "exit":
-                    # 到达出口，停在出口位置
+                    # 到达出口，记录到达时间并移除 responder
+                    if rid not in responder_arrival_steps_dict:
+                        responder_arrival_steps.append(step_counter)
+                        responder_arrival_steps_dict.add(rid)
+                        logger.info(f"Responder {rid} arrived at exit at step {step_counter}")
                     active_tasks.pop(rid)
                     release_claims(rid)
-                    # 不移除responder，停在出口
-                    occupied.add((tx, ty))
+                    # 从 responders 中移除
+                    if rid in MapDataServiceObj.responders[floor_name]:
+                        del MapDataServiceObj.responders[floor_name][rid]
 
                 else:
                     # 探索任务到达，释放预留，检查目标是否仍然有效
@@ -917,6 +942,16 @@ while True:
                     release_claims(rid)
                     active_tasks.pop(rid, None)
 
+    # ===== 8. 检查模拟结束条件 =====
+    # 所有 responder 已到达出口，且没有幸存者，模拟结束
+    all_responders_gone = (
+        not MapDataServiceObj.get_responders(floor_name)
+        and responder_cnt_total > 0
+    )
+    if all_responders_gone:
+        logger.info("All responders have reached exits. Simulation ended.")
+        break
+
     step_counter += 1
 
     # ===== 烟雾推进（核心）=====
@@ -938,3 +973,47 @@ while True:
     elapsed = time.time() - start_time
     if elapsed < target_dt:
         time.sleep(target_dt - elapsed)
+
+# ================= 模拟结束，输出统计数据 =================
+logger.info("========== Simulation Statistics ==========")
+if responder_start_step is not None:
+    # 1. 最后一位 occupant 被救出时间 - responder 开始移动时间
+    if last_occupant_rescued_step is not None:
+        occupant_rescue_time = (last_occupant_rescued_step - responder_start_step) * dt
+        logger.info(
+            f"Last occupant rescued at step {last_occupant_rescued_step}, "
+            f"responder started at step {responder_start_step}, "
+            f"Occupant Rescue Duration = {occupant_rescue_time:.1f}s"
+        )
+        print(f"[STAT] Occupant Rescue Duration: {occupant_rescue_time:.1f}s")
+    else:
+        logger.warning("No occupant was rescued during simulation.")
+        print("[STAT] Occupant Rescue Duration: N/A (no occupants rescued)")
+
+    # 2. 最后一位 responder 回到出口时间 - responder 开始移动时间
+    if responder_arrival_steps:
+        last_responder_arrival = max(responder_arrival_steps)
+        responder_last_exit_time = (last_responder_arrival - responder_start_step) * dt
+        logger.info(
+            f"Last responder arrived at step {last_responder_arrival}, "
+            f"last responder exit duration = {responder_last_exit_time:.1f}s"
+        )
+        print(f"[STAT] Last Responder Exit Duration: {responder_last_exit_time:.1f}s")
+
+        # 3. responder 从开始移动到回到出口的平均时间
+        arrival_durations = [(s - responder_start_step) * dt for s in responder_arrival_steps]
+        avg_exit_time = sum(arrival_durations) / len(arrival_durations)
+        logger.info(
+            f"Responder average exit time: {avg_exit_time:.1f}s "
+            f"(arrivals: {arrival_durations})"
+        )
+        print(f"[STAT] Avg Responder Exit Duration: {avg_exit_time:.1f}s")
+    else:
+        logger.warning("No responders reached the exit.")
+        print("[STAT] Last Responder Exit Duration: N/A")
+        print("[STAT] Avg Responder Exit Duration: N/A")
+else:
+    logger.warning("Responder movement never started.")
+    print("[STAT] All durations: N/A (responders never started moving)")
+
+logger.info("==========================================")
