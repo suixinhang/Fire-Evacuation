@@ -202,6 +202,7 @@ def ann_calculation(debug, no_record, dis_init_fire, random_occupant, map_id, tr
 @click.option('--dis-prob', is_flag=True, help="Disable init probability")
 @click.option('--dis-init_fire', is_flag=True, help="Disable init fire")
 @click.option('--random-occupant', help="Random Occupants", type = int, default = 0)
+@click.option('--responder-cnt', help="Number of responders (evenly distributed to startpoints, enter one by one)", type = int, default = 0)
 @click.option('--map-id', help="Use which map?", type = str)
 @click.option('--use-old-fire-simulation', help="Use exist fire simulation record", default = "", type = str)
 @click.option('--http-addr', help="HTTP Server Addr", default = "0.0.0.0", type = str)
@@ -209,7 +210,7 @@ def ann_calculation(debug, no_record, dis_init_fire, random_occupant, map_id, tr
 @click.option('--speed', help="Simulation speed multiplier", default = 1.0, type = float)
 @click.option('--move-after', help="Move after what secound?", default = 0, type = int)
 @click.option('--save-map', is_flag=True, help="Save initial random map as .pkl in map_record/")
-def algorithm_simulation(debug, no_record, dis_prob, dis_init_fire, random_occupant, map_id, use_old_fire_simulation, http_addr, http_port, speed, move_after, save_map):
+def algorithm_simulation(debug, no_record, dis_prob, dis_init_fire, random_occupant, responder_cnt, map_id, use_old_fire_simulation, http_addr, http_port, speed, move_after, save_map):
     """
     Algorithm Simulation
     """
@@ -221,6 +222,7 @@ def algorithm_simulation(debug, no_record, dis_prob, dis_init_fire, random_occup
         raise ValueError("No provided good map id!")
         exit(-1)
     os.environ["FIRE_EVACUATION_RANDOM_OCCUPANT"] = str(random_occupant)
+    os.environ["FIRE_EVACUATION_RESPONDER_CNT"] = str(responder_cnt)
     os.environ["FIRE_EVACUATION_USE_MAP_ID"] = map_id
     os.environ["FIRE_EVACUATION_USE_OLD_FIRE_SIMULATION"] = use_old_fire_simulation
     os.environ["FIRE_EVACUATION_HTTP_ADDR"] = http_addr

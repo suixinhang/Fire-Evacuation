@@ -21,6 +21,28 @@ if os.getenv("FIRE_EVACUATION_RANDOM_OCCUPANT") != '0':
         int(os.getenv("FIRE_EVACUATION_RANDOM_OCCUPANT"))
     )
 
+# ===== responders: 平均分配到 startpoint，全部同时进入 =====
+responder_cnt = int(os.getenv("FIRE_EVACUATION_RESPONDER_CNT", "0"))
+
+if responder_cnt > 0:
+    startpoints = MapDataServiceObj.startpoints.get(floor_name, [])
+    if startpoints:
+        # 清除旧的 responders
+        MapDataServiceObj.responders[floor_name].clear()
+
+        # 平均分配：round-robin 将 responder 分配到各个 startpoint，全部同时加入
+        for i in range(responder_cnt):
+            sx, sy = startpoints[i % len(startpoints)]
+            rid = f"responder_{i}"
+            MapDataServiceObj.responders[floor_name][rid] = (sx, sy)
+
+        logger.info(
+            f"Responder schedule: {responder_cnt} responders -> "
+            f"{len(startpoints)} startpoints, "
+            f"~{responder_cnt // len(startpoints)} per startpoint"
+        )
+    else:
+        logger.warning("No startpoints found for responder distribution!")
 # ===== 读取烟雾记录（时间序列）=====
 use_old_fire_simulation = os.getenv("FIRE_EVACUATION_USE_OLD_FIRE_SIMULATION")
 

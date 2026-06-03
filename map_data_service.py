@@ -38,6 +38,7 @@ class MapDataService:
         self.probability_map = {}
         self.fire_probability_map = {}
         self.entrances = {}
+        self.startpoints = {}
         self.global_time = 0.0
         self.visibility_map = {}
         self.global_memory_occupants = {}
@@ -90,6 +91,7 @@ class MapDataService:
             self.smoke_density[fname] = {}
             self.fire_origins[fname] = []
             self.entrances[fname] = []
+            self.startpoints[fname] = []
             self.cell_weight[fname] = {}
             self.responders[fname] = {}
             self.redundancy[fname] = {}
@@ -133,13 +135,6 @@ class MapDataService:
                             self.block_status[fname][key] = "fire"
                             self.smoke_density[fname][key] = 100
                             self.fire_origins[fname].append((x, y))
-
-                        elif t == "responder":
-                            rid = f"{x},{y}"
-                            self.responders[fname][rid] = (x, y)
-
-                            self.block_status[fname][key] = "unwatched"
-                            self.smoke_density[fname][key] = 0
 
                         else:
                             self.block_status[fname][key] = "unwatched"
@@ -191,10 +186,9 @@ class MapDataService:
                     self.smoke_density[fname][key] = 0
                     self.entrances[fname].append((x, y))
 
-            # 删除 map 中 responder
-            floor["points"] = [
-                p for p in points if p.get("type") != "responder"
-            ]
+                elif t == "startpoint":
+                    # 出生点：可行走格子，不标记为 null，只收集坐标
+                    self.startpoints[fname].append((x, y))
 
         if os.getenv('FIRE_EVACUATION_DISABLE_INIT_PROBABILITY') == "0":
             for fname in self.simulators:
