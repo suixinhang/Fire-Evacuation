@@ -163,9 +163,24 @@ class SmokeSimulation:
         smoothed[self.wall == 1] = 0
         return self.add_boundary_conditions(smoothed)
 
-    def step(self, fire_origins, dt=None):
+    def step(self, fire_origins, dt=None,
+             diffusion=None, viscosity=None,
+             strength=None, inismoke=None,
+             decay_factor=None, dx=None):
         if dt is not None:
             self.dt = dt
+        if diffusion is not None:
+            self.diffusion = diffusion
+        if viscosity is not None:
+            self.viscosity = viscosity
+        if strength is not None:
+            self.strength = strength
+        if inismoke is not None:
+            self.inismoke = inismoke
+        if decay_factor is not None:
+            self.decay_factor = decay_factor
+        if dx is not None:
+            self.dx = dx
             
         # 1. 外部力/源注入
         self.inject_source(fire_origins,self.strength, self.inismoke)
