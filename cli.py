@@ -196,6 +196,18 @@ def ann_calculation(debug, no_record, dis_init_fire, random_occupant, map_id, tr
         print(f"  (ANN ~ 1 -> random distribution, ANN < 1 -> clustered, ANN > 1 -> dispersed)")
         print(f"{'='*80}\n")
 
+@click.command(help="Convert map_snapshot JSON to PKL and register to map_data")
+@click.argument('snapshot-path', type=str)
+@click.option('--map-name', default=None, type=str, help="Optional: custom map name")
+def snapshot2pkl(snapshot_path, map_name):
+    """
+    Convert map_snapshot JSON to .pkl format and register in map_data/list.json
+    Example: python cli.py snapshot2pkl map_snapshot/1780499442/1780499442_1_smaller.json
+    """
+    from snapshot_to_pkl import convert_snapshot_to_pkl
+    convert_snapshot_to_pkl(snapshot_path, map_name)
+
+
 @click.command(help="Test Smoke Distrubution")
 @click.option('--debug', is_flag=True, help="Debug")
 @click.option('--no-record', is_flag=True, help="Record")
@@ -237,6 +249,7 @@ cli.add_command(export_map)
 cli.add_command(import_map)
 cli.add_command(replay)
 cli.add_command(ann_calculation)
+cli.add_command(snapshot2pkl)
 cli.add_command(algorithm_simulation)
 
 if __name__ == '__main__':
