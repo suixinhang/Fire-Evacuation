@@ -14,12 +14,14 @@ dt = 1
 
 floor_name = MapDataServiceObj.map_obj.get_data()[0]["name"]
 
-# ===== occupants =====
-if os.getenv("FIRE_EVACUATION_RANDOM_OCCUPANT") != '0':
-    MapDataServiceObj.respawn_occupants(
-        floor_name,
-        int(os.getenv("FIRE_EVACUATION_RANDOM_OCCUPANT"))
-    )
+# ===== occupants（延迟到 move_after 之后才放置，避免提前暴露位置）=====
+_random_occupant_count = int(os.getenv("FIRE_EVACUATION_RANDOM_OCCUPANT", "0"))
+occupants_spawned = False
+
+if _random_occupant_count > 0 and int(os.getenv("FIRE_EVACUATION_MOVE_AFTER", "0")) <= 0:
+    # move_after=0 时立即放置
+    MapDataServiceObj.respawn_occupants(floor_name, _random_occupant_count)
+    occupants_spawned = True
 
 # ===== responders: 平均分配到 startpoint，全部同时进入 =====
 responder_cnt = int(os.getenv("FIRE_EVACUATION_RESPONDER_CNT", "0"))
@@ -428,6 +430,12 @@ def _open_door_if_present(floor_name, pos):
 while True:
     start_time = time.time()
     if first_move_step - step_counter <= 0:
+        # 延迟放置 occupants（仅在 move_after 秒后才放置，避免提前暴露位置）
+        if not occupants_spawned and _random_occupant_count > 0:
+            MapDataServiceObj.respawn_occupants(floor_name, _random_occupant_count)
+            occupants_spawned = True
+            logger.info(f"Occupants spawned at step {step_counter} (move_after={first_move_step})")
+
         # 记录 responder 开始移动的时间点
         if responder_start_step is None and responder_cnt_total > 0:
             responder_start_step = step_counter
