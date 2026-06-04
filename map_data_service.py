@@ -299,9 +299,22 @@ class MapDataService:
                 key = f"{x},{y}"
                 self.fire_probability_map[fname][key] = weights[i] / total
 
-            # ===== 3. 随机选火源 =====
-            chosen = random.choices(valid_cells, weights=weights, k=1)[0]
-            cx, cy = chosen[0], chosen[1]
+            # ===== 3. 选取火源（优先使用环境变量指定的固定坐标）=====
+            fixed_pos = os.getenv("FIRE_EVACUATION_FIRE_ORIGIN_POS")
+            if fixed_pos:
+                try:
+                    cx, cy = map(int, fixed_pos.split(","))
+                    if (cx, cy) not in valid_cells:
+                        logger.warning(f"Fixed fire origin ({cx},{cy}) is not a valid cell, falling back to random.")
+                        chosen = random.choices(valid_cells, weights=weights, k=1)[0]
+                        cx, cy = chosen[0], chosen[1]
+                except Exception:
+                    logger.warning(f"Invalid FIRE_EVACUATION_FIRE_ORIGIN_POS='{fixed_pos}', falling back to random.")
+                    chosen = random.choices(valid_cells, weights=weights, k=1)[0]
+                    cx, cy = chosen[0], chosen[1]
+            else:
+                chosen = random.choices(valid_cells, weights=weights, k=1)[0]
+                cx, cy = chosen[0], chosen[1]
 
             # 修复：查找是否已有该点。如果有则直接修改（保留原有 weight），并补全 color；否则新增
             if (cx, cy) in point_map:

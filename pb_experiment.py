@@ -22,18 +22,30 @@ from scipy import stats
 # 基础配置 (用户修改区)
 # ======================================================================
 PROJECT_ROOT = pathlib.Path(__file__).parent.absolute()
-N_RESPONDERS = 10  # 救援人员总数
+N_RESPONDERS = 2  # 救援人员总数
 
 # 地图字典: map_1 ~ map_8 对应的 pkl 文件名 (修改这里的值为实际地图文件)
 MAP_DICT = {
-    1: "map_1.pkl",  # TODO: 填入实际 pkl 文件名
-    2: "map_2.pkl",
-    3: "map_3.pkl",
-    4: "map_4.pkl",
-    5: "map_5.pkl",
-    6: "map_6.pkl",
-    7: "map_7.pkl",
-    8: "map_8.pkl",
+    1: "1780404492_2_smaller",  # TODO: 填入实际 pkl 文件名
+    2: "1780404508_2_smaller",
+    3: "1780404492_1_larger",
+    4: "1780404508_1_larger",
+    5: "1780404439_2_smaller",
+    6: "1780404461_1_smaller",
+    7: "1780404439_1_larger",
+    8: "1780404461_2_larger",
+}
+
+# 每张地图对应的固定火源坐标（从 pkl 文件中读取的原始 fire_origin）
+FIRE_ORIGIN_DICT = {
+    "1780404492_2_smaller": (24, 15),
+    "1780404508_2_smaller": (24, 16),
+    "1780404492_1_larger":  (24, 15),
+    "1780404508_1_larger":  (24, 16),
+    "1780404439_2_smaller": (24, 15),
+    "1780404461_1_smaller": (24, 16),
+    "1780404439_1_larger":  (24, 15),
+    "1780404461_2_larger":  (24, 16),
 }
 
 # ======================================================================
@@ -61,12 +73,12 @@ F8_MINUS = 0.001
 F8_PLUS = 0.1
 
 # 因子 9: 烟雾推力强度 (strength)
-F9_MINUS = 4.18
-F9_PLUS = 9.3
+F9_MINUS = 0.345
+F9_PLUS = 0.525
 
 # ======================================================================
 # PB 12-Run 标准设计矩阵 (11 列: F1-F9 + D1-D2)
-# + → 1, - → -1
+# + → 1, - → -1 地图1代表+，地图2为-；更分散代表+，更聚集代表-，人更多代表+，人更少代表-
 # ======================================================================
 PB_MATRIX = np.array([
     # F1  F2  F3  F4  F5  F6  F7  F8  F9 D10 D11
@@ -84,7 +96,7 @@ PB_MATRIX = np.array([
     [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1],  # Run 12
 ])
 
-FACTOR_NAMES = ["F1(Map)", "F2(Map)", "F3(Map)", "F4(Move)", "F5(Decay)",
+FACTOR_NAMES = ["F1(Map)", "F2(ANN)", "F3(Occupants)", "F4(Move)", "F5(Decay)",
                 "F6(Diff)", "F7(Visc)", "F8(Smoke)", "F9(Strength)", "D10", "D11"]
 REAL_FACTORS = [0, 1, 2, 3, 4, 5, 6, 7, 8]  # indices of real factors
 DUMMY_FACTORS = [9, 10]  # indices of dummy factors
@@ -136,6 +148,10 @@ def run_single_experiment(run_idx, row, map_id, move_after,
     在子进程中运行一次仿真。
     通过设置环境变量 + monkey-patch SmokeSimulation.step 传入烟雾参数。
     """
+    # 获取当前地图的固定火源坐标
+    fire_origin = FIRE_ORIGIN_DICT.get(map_id)
+    fire_origin_str = f"{fire_origin[0]},{fire_origin[1]}" if fire_origin else ""
+
     env_vars = {
         "FIRE_EVACUATION_DEBUG": "0",
         "FIRE_EVACUATION_NO_RECORD": "1",
@@ -148,6 +164,8 @@ def run_single_experiment(run_idx, row, map_id, move_after,
         "FIRE_EVACUATION_MOVE_AFTER": str(move_after),
         "FIRE_EVACUATION_USE_OLD_FIRE_SIMULATION": "",
         "FIRE_EVACUATION_SAVE_MAP": "0",
+        # 固定火源坐标（跳过随机选取）
+        "FIRE_EVACUATION_FIRE_ORIGIN_POS": fire_origin_str,
         # 烟雾参数传入环境变量，供 monkey-patch 读取
         "PB_DIFFUSION": str(diffusion),
         "PB_VISCOSITY": str(viscosity),
@@ -155,6 +173,8 @@ def run_single_experiment(run_idx, row, map_id, move_after,
         "PB_INISMOKE": str(inismoke),
         "PB_DECAY_FACTOR": str(decay_factor),
         "PB_DX": "0.5",
+        # 为每个 run 分配独立 HTTP 端口，方便在浏览器中实时观看
+        "FIRE_EVACUATION_HTTP_PORT": str(8001 + run_idx),
     }
 
     # 构造子进程内运行的 Python 代码
@@ -193,13 +213,14 @@ import algorithm_simulation
     result = subprocess.run(
         [sys.executable, "-c", runner_code],
         capture_output=True, text=True, cwd=cwd, env=full_env,
-        timeout=600,  # 10 分钟超时
+        timeout=1200,  # 10 分钟超时
     )
 
     print(f"\n{'─'*60}")
     print(f"Run {run_idx + 1}/{N_RUNS} | map={map_id} | move_after={move_after}")
     print(f"  smoke: diff={diffusion:.2e} visc={viscosity:.2e} "
           f"strength={strength} inismoke={inismoke} decay={decay_factor}")
+    print(f"  [WEB] http://localhost:{8001 + run_idx}")
     if result.stdout:
         # 只打印关键 [STAT] 行
         for line in result.stdout.splitlines():
@@ -424,7 +445,9 @@ def main():
 
     # ---- 第 2 步: 保存 CSV ----
     print("\n[Phase 2] Saving results...")
-    csv_path = PROJECT_ROOT / "pb_results.csv"
+    out_dir = PROJECT_ROOT / "pb_output" / f"responder_{N_RESPONDERS}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = out_dir / "pb_results.csv"
     save_results_csv(results, str(csv_path))
 
     # ---- 第 3 步: 统计分析 ----
@@ -434,18 +457,18 @@ def main():
     # ---- 第 4 步: 绘制 Pareto Chart ----
     print("\n[Phase 4] Plotting Pareto Charts...")
     plot_pareto(analyses.get("Y1_OccupantRescue"),
-                str(PROJECT_ROOT / "pb_pareto_Y1.png"))
+                str(out_dir / "pb_pareto_Y1.png"))
     plot_pareto(analyses.get("Y2_LastResponderExit"),
-                str(PROJECT_ROOT / "pb_pareto_Y2.png"))
+                str(out_dir / "pb_pareto_Y2.png"))
     plot_pareto(analyses.get("Y3_AvgResponderExit"),
-                str(PROJECT_ROOT / "pb_pareto_Y3.png"))
+                str(out_dir / "pb_pareto_Y3.png"))
 
     print("\n" + "=" * 70)
     print("  PB Experiment Complete!")
     print(f"  Results CSV : {csv_path}")
-    print(f"  Pareto Y1   : pb_pareto_Y1.png")
-    print(f"  Pareto Y2   : pb_pareto_Y2.png")
-    print(f"  Pareto Y3   : pb_pareto_Y3.png")
+    print(f"  Pareto Y1   : {out_dir / 'pb_pareto_Y1.png'}")
+    print(f"  Pareto Y2   : {out_dir / 'pb_pareto_Y2.png'}")
+    print(f"  Pareto Y3   : {out_dir / 'pb_pareto_Y3.png'}")
     print("=" * 70)
 
 
