@@ -19,8 +19,12 @@ def convert_snapshot_to_pkl(json_path: str, new_name: str = None):
     with open(json_path, "r", encoding="utf-8") as f:
         snapshot = json.load(f)
 
-    map_id = snapshot.get("id", str(int(__import__("time").time())))
-    map_name = new_name or snapshot.get("name", "Unnamed")
+    # 使用文件名（不含扩展名）作为新的 map_id，
+    # 这样每个 snapshot 成为独立的新地图，保留 occupants 的随机分布
+    map_id = json_path.stem  # e.g. "1780404439_1_larger"
+
+    base_name = snapshot.get("name", "Unnamed")
+    map_name = new_name or base_name
     map_data = snapshot.get("data", [])
 
     # 输出 .pkl 到 map_data 目录
