@@ -23,6 +23,7 @@ from scipy import stats
 # ======================================================================
 PROJECT_ROOT = pathlib.Path(__file__).parent.absolute()
 N_RESPONDERS = 2  # 救援人员总数
+DOOR_OPEN_PROB = 0.0  # 每扇门初始开启的概率 (0-1)
 
 # 地图字典: map_1 ~ map_8 对应的 pkl 文件名 (修改这里的值为实际地图文件)
 MAP_DICT = {
@@ -164,6 +165,8 @@ def run_single_experiment(run_idx, row, map_id, move_after,
         "FIRE_EVACUATION_MOVE_AFTER": str(move_after),
         "FIRE_EVACUATION_USE_OLD_FIRE_SIMULATION": "",
         "FIRE_EVACUATION_SAVE_MAP": "0",
+        # 每扇门初始开启的概率
+        "FIRE_EVACUATION_DOOR_OPEN_PROB": str(DOOR_OPEN_PROB),
         # 固定火源坐标（跳过随机选取）
         "FIRE_EVACUATION_FIRE_ORIGIN_POS": fire_origin_str,
         # 烟雾参数传入环境变量，供 monkey-patch 读取

@@ -81,6 +81,8 @@ class MapDataService:
         self.fire_origins.clear()
         self.responders.clear()
 
+        door_open_prob = float(os.getenv("FIRE_EVACUATION_DOOR_OPEN_PROB", "0.0"))
+
         floors = self.map_obj.get_data() or []
 
         for floor in floors:
@@ -127,6 +129,7 @@ class MapDataService:
                             sim.wall[y, x] = 1
 
                         elif t == "door":
+                            # 门默认关闭；第二遍循环会根据概率覆盖
                             self.block_status[fname][key] = "unwatched"
                             self.smoke_density[fname][key] = -1
                             sim.wall[y, x] = 1
@@ -157,6 +160,47 @@ class MapDataService:
                 for key in valid_cells:
                     self.probability_map[fname][key] = init_prob
 
+            # ===== 门连通分量聚类：连在一起的门算一组，同开同关 =====
+            all_door_coords = set()
+            for p in points:
+                if p.get("type") == "door":
+                    all_door_coords.add((p["x"], p["y"]))
+
+            door_cluster_open = {}  # (x, y) -> bool，门是否属于被开启的簇
+            if all_door_coords:
+                remaining = set(all_door_coords)
+                clusters = []
+                while remaining:
+                    sx, sy = remaining.pop()
+                    cluster = []
+                    queue = [(sx, sy)]
+                    while queue:
+                        cx, cy = queue.pop(0)
+                        cluster.append((cx, cy))
+                        for dx, dy in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
+                            nx, ny = cx + dx, cy + dy
+                            if (nx, ny) in remaining:
+                                remaining.remove((nx, ny))
+                                queue.append((nx, ny))
+                    clusters.append(cluster)
+
+                door_total_count = len(all_door_coords)
+                door_cluster_count = len(clusters)
+                door_open_cluster_count = 0
+                for cluster in clusters:
+                    is_open = random.random() < door_open_prob
+                    if is_open:
+                        door_open_cluster_count += 1
+                    for coord in cluster:
+                        door_cluster_open[coord] = is_open
+
+                door_open_count = sum(1 for v in door_cluster_open.values() if v)
+                logger.info(
+                    f"Doors initialized: {door_open_count}/{door_total_count} doors open "
+                    f"({door_open_cluster_count}/{door_cluster_count} clusters open, "
+                    f"prob={door_open_prob:.2f}) on floor {fname}"
+                )
+
             # ===== 二次处理（权重 / entrance）=====
             for p in points:
                 x, y = p["x"], p["y"]
@@ -173,9 +217,17 @@ class MapDataService:
                     sim.wall[y, x] = 1
 
                 elif t == "door":
-                    self.block_status[fname][key] = "unwatched"
-                    self.smoke_density[fname][key] = -1
-                    sim.wall[y, x] = 1
+                    if door_cluster_open.get((x, y), False):
+                        # 门所在簇被开启：变为普通可行走格子
+                        p["type"] = None
+                        self.block_status[fname][key] = "unwatched"
+                        self.smoke_density[fname][key] = 0
+                        sim.wall[y, x] = 0
+                    else:
+                        # 门所在簇保持关闭
+                        self.block_status[fname][key] = "unwatched"
+                        self.smoke_density[fname][key] = -1
+                        sim.wall[y, x] = 1
 
                 elif t == "fire_origin":
                     self.block_status[fname][key] = "null"

@@ -222,7 +222,8 @@ def snapshot2pkl(snapshot_path, map_name):
 @click.option('--speed', help="Simulation speed multiplier", default = 1.0, type = float)
 @click.option('--move-after', help="Move after what secound?", default = 0, type = int)
 @click.option('--save-map', is_flag=True, help="Save initial random map as .pkl in map_record/")
-def algorithm_simulation(debug, no_record, dis_prob, dis_init_fire, random_occupant, responder_cnt, map_id, use_old_fire_simulation, http_addr, http_port, speed, move_after, save_map):
+@click.option('--door-prob', help="Probability each door is open initially (0-1)", default = 0.0, type = float)
+def algorithm_simulation(debug, no_record, dis_prob, dis_init_fire, random_occupant, responder_cnt, map_id, use_old_fire_simulation, http_addr, http_port, speed, move_after, save_map, door_prob):
     """
     Algorithm Simulation
     """
@@ -242,6 +243,7 @@ def algorithm_simulation(debug, no_record, dis_prob, dis_init_fire, random_occup
     os.environ["FIRE_EVACUATION_SPEED"] = str(speed)
     os.environ["FIRE_EVACUATION_MOVE_AFTER"] = str(move_after)
     os.environ["FIRE_EVACUATION_SAVE_MAP"] = '1' if save_map else '0'
+    os.environ["FIRE_EVACUATION_DOOR_OPEN_PROB"] = str(door_prob)
     import algorithm_simulation
 
 cli.add_command(draw_map)
